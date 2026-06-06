@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "button": {
+      "open": {
+        "default": "mdi:gate-open"
+      }
+    },
+    "sensor": {
+      "last_opened": {
+        "default": "mdi:history"
+      }
+    },
+    "binary_sensor": {
+      "connectivity": {
+        "default": "mdi:lan-connect",
+        "state": {
+          "off": "mdi:lan-disconnect"
+        }
+      }
+    }
+  },
+  "services": {
+    "create_temporary_access": {
+      "service": "mdi:account-clock"
+    },
+    "delete_temporary_access": {
+      "service": "mdi:account-cancel"
+    }
+  }
+}

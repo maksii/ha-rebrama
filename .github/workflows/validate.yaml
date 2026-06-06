@@ -1,0 +1,25 @@
+name: HACS validation
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  validate-hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+          # Brand images are shipped locally in custom_components/rebrama/brand/
+          # (Home Assistant 2026.3+ brands proxy). Until the `rebrama` domain is
+          # also accepted into the home-assistant/brands repository, skip the
+          # remote brands check so CI stays green for the custom-repository path.
+          ignore: brands

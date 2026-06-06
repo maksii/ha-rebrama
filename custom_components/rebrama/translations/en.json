@@ -1,0 +1,154 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect your Rebrama account",
+        "description": "Sign in with the phone number and password you use in the Rebrama mobile app. The account must already be registered in the app.",
+        "data": {
+          "phone": "Phone number",
+          "password": "Password"
+        },
+        "data_description": {
+          "phone": "Include the country code, for example 380XXXXXXXXX. The leading '+' is optional.",
+          "password": "Your Rebrama app password."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Rebrama",
+        "description": "The stored credentials for {phone} are no longer valid. Enter the password again.",
+        "data": {
+          "password": "Password"
+        },
+        "data_description": {
+          "password": "Your Rebrama app password."
+        }
+      },
+      "reconfigure": {
+        "title": "Update Rebrama credentials",
+        "description": "Update the phone number and/or password for this account. It must remain the same Rebrama account.",
+        "data": {
+          "phone": "Phone number",
+          "password": "Password"
+        },
+        "data_description": {
+          "phone": "Include the country code, for example 380XXXXXXXXX. The leading '+' is optional.",
+          "password": "Your Rebrama app password."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Rebrama. Check your internet connection and try again.",
+      "invalid_auth": "Invalid phone number or password.",
+      "invalid_phone": "Enter a valid phone number including the country code.",
+      "account_not_found": "No Rebrama account exists for this phone number. Create one in the Rebrama app first.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Rebrama account is already configured.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "The configuration was updated successfully.",
+      "wrong_account": "The credentials are for a different Rebrama account than the one configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rebrama options",
+        "data": {
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "scan_interval": "How often (in seconds) to refresh access points. Leave empty to use the interval recommended by the Rebrama server."
+        }
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "open": {
+        "name": "Open"
+      }
+    },
+    "binary_sensor": {
+      "connectivity": {
+        "name": "Connectivity"
+      }
+    },
+    "sensor": {
+      "last_opened": {
+        "name": "Last opened"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Authentication with Rebrama failed. Please re-authenticate the integration."
+    },
+    "open_failed": {
+      "message": "Could not open the access point: {error}"
+    },
+    "open_not_delivered": {
+      "message": "The open command could not be delivered to the device. It may be offline."
+    },
+    "entry_not_found": {
+      "message": "The selected Rebrama account could not be found."
+    },
+    "entry_not_loaded": {
+      "message": "The selected Rebrama account is not loaded."
+    },
+    "invalid_access_point": {
+      "message": "{entity_id} is not a Rebrama access point."
+    },
+    "single_account_required": {
+      "message": "All selected access points must belong to the same Rebrama account."
+    },
+    "invalid_time_range": {
+      "message": "The end time must be after the start time."
+    },
+    "service_failed": {
+      "message": "The Rebrama request failed: {error}"
+    }
+  },
+  "services": {
+    "create_temporary_access": {
+      "name": "Create temporary access",
+      "description": "Creates a time-limited share link for one or more access points.",
+      "fields": {
+        "access_points": {
+          "name": "Access points",
+          "description": "The access point 'open' buttons to grant temporary access to."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When the temporary access becomes valid."
+        },
+        "end": {
+          "name": "End",
+          "description": "When the temporary access expires."
+        },
+        "description": {
+          "name": "Description",
+          "description": "A label shown for this temporary access."
+        },
+        "uses": {
+          "name": "Maximum uses",
+          "description": "Optional limit on how many times the link can be used."
+        }
+      }
+    },
+    "delete_temporary_access": {
+      "name": "Delete temporary access",
+      "description": "Deletes a previously created temporary access link.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "The Rebrama account the temporary access belongs to."
+        },
+        "link": {
+          "name": "Link or slug",
+          "description": "The share URL or its trailing slug to delete."
+        }
+      }
+    }
+  }
+}

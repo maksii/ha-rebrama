@@ -1,0 +1,11 @@
+{
+  "domain": "rebrama",
+  "name": "Rebrama",
+  "codeowners": ["@maksii"],
+  "config_flow": true,
+  "documentation": "https://github.com/maksii/ha-rebrama",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/maksii/ha-rebrama/issues",
+  "version": "1.0.0"
+}

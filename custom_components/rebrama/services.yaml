@@ -1,0 +1,42 @@
+create_temporary_access:
+  fields:
+    access_points:
+      required: true
+      selector:
+        entity:
+          integration: rebrama
+          domain: button
+          multiple: true
+    start:
+      required: true
+      selector:
+        datetime:
+    end:
+      required: true
+      selector:
+        datetime:
+    description:
+      default: Home Assistant
+      example: Cleaner
+      selector:
+        text:
+    uses:
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 1000
+          mode: box
+
+delete_temporary_access:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: rebrama
+    link:
+      required: true
+      example: https://rebrama.com/access/abc123
+      selector:
+        text:
