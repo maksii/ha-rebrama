@@ -38,7 +38,7 @@ async def test_user_flow_success(
     hass: HomeAssistant, flow_client: MagicMock, mock_setup_entry: AsyncMock
 ) -> None:
     """A valid phone/password creates an entry with normalized phone + tokens."""
-    result = await _submit_user(hass, "+380 00 000 00 00", "secret")
+    result = await _submit_user(hass, "+380 99 000 00 00", "secret")
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
