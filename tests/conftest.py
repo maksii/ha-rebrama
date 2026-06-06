@@ -100,6 +100,7 @@ def mock_client(sample_places: list[Place]) -> MagicMock:
     client.async_get_places = AsyncMock(return_value=sample_places)
     client.async_get_latest_open_log = AsyncMock(return_value=None)
     client.async_open = AsyncMock(return_value=True)
+    client.async_list_temporary_accesses = AsyncMock(return_value=[])
     client.async_create_temporary_access = AsyncMock(
         return_value={"tempAccessLink": "https://rebrama.com/access/abc123"}
     )

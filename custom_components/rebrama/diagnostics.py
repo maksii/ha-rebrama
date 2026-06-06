@@ -55,6 +55,19 @@ async def async_get_config_entry_diagnostics(
         for place in data.places.values()
     ]
 
+    # Share links/slugs are secrets, so only the non-sensitive shape is included.
+    temporary_accesses = [
+        {
+            "description": access.description,
+            "valid_from": (
+                access.date_start.isoformat() if access.date_start else None
+            ),
+            "valid_until": access.date_end.isoformat() if access.date_end else None,
+            "max_uses": access.uses_number,
+        }
+        for access in data.temp_accesses
+    ]
+
     return {
         "entry": {
             "data": async_redact_data(dict(entry.data), TO_REDACT),
@@ -66,5 +79,11 @@ async def async_get_config_entry_diagnostics(
             if coordinator.update_interval
             else None
         ),
+        "subscription_valid_until": (
+            coordinator.profile.valid_until.isoformat()
+            if coordinator.profile.valid_until
+            else None
+        ),
+        "temporary_accesses": temporary_accesses,
         "places": async_redact_data(places, TO_REDACT),
     }

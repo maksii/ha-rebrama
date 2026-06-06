@@ -6,8 +6,22 @@
       }
     },
     "sensor": {
+      "subscription_expires": {
+        "default": "mdi:calendar-clock"
+      },
+      "access_points_online": {
+        "default": "mdi:door"
+      },
+      "temporary_accesses": {
+        "default": "mdi:account-clock"
+      },
       "last_opened": {
         "default": "mdi:history"
+      }
+    },
+    "calendar": {
+      "temporary_access": {
+        "default": "mdi:calendar-account"
       }
     },
     "binary_sensor": {

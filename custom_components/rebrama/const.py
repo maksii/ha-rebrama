@@ -12,6 +12,7 @@ DOMAIN: Final = "rebrama"
 PLATFORMS: Final[list[Platform]] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.CALENDAR,
     Platform.SENSOR,
 ]
 
@@ -25,6 +26,8 @@ CONFIGURATION_URL: Final = "https://rebrama.com"
 
 # --- HTTP API ---
 BASE_URL: Final = "https://rebrama.com"
+# URL path segment under which share links live (https://rebrama.com/access/<slug>).
+TEMP_ACCESS_PATH: Final = "access"
 # Mirrors the official app's versionCode; keeps the request shape identical to
 # the mobile client so server-side bot filtering does not reject us.
 APP_BUILD_NUMBER: Final = "16"
@@ -50,9 +53,13 @@ ERROR_PHONE_FORMAT: Final = 1210
 ERROR_TEMP_ACCESS_NOT_FOUND: Final = 1501
 
 # --- Polling ---
-DEFAULT_SCAN_INTERVAL: Final = timedelta(seconds=60)
-MIN_SCAN_INTERVAL: Final = 30
-MAX_SCAN_INTERVAL: Final = 600
+# Online status and (admin-only) opening logs are the only data that changes on
+# their own; places rarely change and can be picked up with a manual reload. A
+# few minutes is plenty for a background integration, so we default well above
+# the official widget's ~60 s cadence and let users tune it.
+DEFAULT_SCAN_INTERVAL: Final = timedelta(minutes=5)
+MIN_SCAN_INTERVAL: Final = 60
+MAX_SCAN_INTERVAL: Final = 3600
 
 # --- Services ---
 SERVICE_CREATE_TEMPORARY_ACCESS: Final = "create_temporary_access"

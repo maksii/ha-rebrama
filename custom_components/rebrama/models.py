@@ -14,6 +14,24 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+from .const import BASE_URL, TEMP_ACCESS_PATH
+
+# Epoch values above this are milliseconds, not seconds (seconds won't reach
+# 1e11 until the year 5138). The temp-access endpoints document their date unit
+# as unverified (s vs ms), so normalize defensively.
+_EPOCH_MS_THRESHOLD = 1e11
+
+
+def _epoch_to_datetime(value: Any) -> datetime | None:
+    """Convert an epoch value (seconds *or* milliseconds) to an aware datetime."""
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    seconds = value / 1000 if value > _EPOCH_MS_THRESHOLD else value
+    try:
+        return dt_util.utc_from_timestamp(seconds)
+    except (OverflowError, OSError, ValueError):
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class AuthTokens:
@@ -34,11 +52,21 @@ class Profile:
 
     user_id: str
     phone: str
+    valid_until: datetime | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Profile:
-        """Build from a profile payload."""
-        return cls(user_id=str(data["id"]), phone=str(data.get("phone") or ""))
+        """Build from a profile payload.
+
+        ``validUntil`` (ISO8601 subscription expiry) is shipped by the API but
+        ignored by the official app's DTOs; we surface it as a sensor.
+        """
+        valid = data.get("validUntil")
+        return cls(
+            user_id=str(data["id"]),
+            phone=str(data.get("phone") or ""),
+            valid_until=dt_util.parse_datetime(valid) if valid else None,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,4 +140,45 @@ class OpenLog:
                 data.get("aceessPointName") or data.get("accessPointName")
             ),
             is_temp_access=bool(data.get("isTempAccess")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TempAccess:
+    """A time-bounded share link (``GET /api/temp-accesses/user``).
+
+    The list payload exposes ``link`` and ``url``; the slug needed for
+    ``{slug}/info`` and ``DELETE {slug}`` is the trailing path segment.
+    """
+
+    slug: str
+    url: str
+    description: str
+    date_start: datetime | None
+    date_end: datetime | None
+    uses_number: int | None
+
+    def is_active(self, now: datetime) -> bool:
+        """Return whether the link has not yet expired at ``now``."""
+        return self.date_end is None or self.date_end > now
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> TempAccess:
+        """Build from one ``temp-accesses`` item."""
+        raw = str(data.get("url") or data.get("link") or "")
+        if raw and "://" not in raw:
+            # The API gave us a bare slug; rebuild the full share URL.
+            slug = raw.strip("/")
+            url = f"{BASE_URL}/{TEMP_ACCESS_PATH}/{slug}"
+        else:
+            slug = raw.rstrip("/").rsplit("/", 1)[-1] if raw else ""
+            url = raw
+        uses = data.get("usesNumber")
+        return cls(
+            slug=slug,
+            url=url,
+            description=str(data.get("description") or ""),
+            date_start=_epoch_to_datetime(data.get("dateStart")),
+            date_end=_epoch_to_datetime(data.get("dateEnd")),
+            uses_number=int(uses) if isinstance(uses, (int, float)) else None,
         )

@@ -36,7 +36,7 @@ from .const import (
     REQUEST_TIMEOUT,
     USER_AGENT,
 )
-from .models import AuthTokens, OpenLog, Place, Profile
+from .models import AuthTokens, OpenLog, Place, Profile, TempAccess
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,6 +166,11 @@ class RebramaClient:
         )
         items = (self._data(body) or {}).get("items") or []
         return OpenLog.from_api(items[0]) if items else None
+
+    async def async_list_temporary_accesses(self) -> list[TempAccess]:
+        """Return all temporary-access share links for the current user."""
+        body = await self._request("GET", "api/temp-accesses/user")
+        return [TempAccess.from_api(item) for item in (self._data(body) or [])]
 
     async def async_create_temporary_access(
         self,

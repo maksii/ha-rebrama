@@ -58,7 +58,7 @@
           "scan_interval": "Update interval"
         },
         "data_description": {
-          "scan_interval": "How often (in seconds) to refresh access points. Leave empty to use the interval recommended by the Rebrama server."
+          "scan_interval": "How often (in seconds, 60–3600) to refresh access-point status. Leave empty for the default of 5 minutes."
         }
       }
     }
@@ -74,7 +74,21 @@
         "name": "Connectivity"
       }
     },
+    "calendar": {
+      "temporary_access": {
+        "name": "Temporary access"
+      }
+    },
     "sensor": {
+      "subscription_expires": {
+        "name": "Subscription expires"
+      },
+      "access_points_online": {
+        "name": "Access points online"
+      },
+      "temporary_accesses": {
+        "name": "Temporary accesses"
+      },
       "last_opened": {
         "name": "Last opened"
       }
@@ -104,6 +118,9 @@
     },
     "invalid_time_range": {
       "message": "The end time must be after the start time."
+    },
+    "no_shareable_access_points": {
+      "message": "This Rebrama account has no access points that can be shared."
     },
     "service_failed": {
       "message": "The Rebrama request failed: {error}"

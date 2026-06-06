@@ -287,3 +287,50 @@ async def test_empty_open_log_returns_none() -> None:
 
     client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
     assert await client.async_get_latest_open_log("p1") is None
+
+
+async def test_list_temporary_accesses_parses_items() -> None:
+    """The temp-access list is parsed into models with derived slugs."""
+
+    def router(method, url, body, headers):
+        assert url.endswith("/api/temp-accesses/user")
+        return 200, {
+            "data": [
+                {
+                    "url": "https://rebrama.com/access/abc123",
+                    "description": "Cleaner",
+                    "dateStart": 1000,
+                    "dateEnd": 2000,
+                    "usesNumber": 3,
+                },
+                {
+                    # Bare slug + ms timestamps exercise the defensive paths.
+                    "link": "xyz789",
+                    "description": "",
+                    "dateStart": 1000000,
+                    "dateEnd": 2000000000000,
+                    "usesNumber": None,
+                },
+            ]
+        }
+
+    client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
+    accesses = await client.async_list_temporary_accesses()
+
+    assert [a.slug for a in accesses] == ["abc123", "xyz789"]
+    assert accesses[0].url == "https://rebrama.com/access/abc123"
+    assert accesses[0].uses_number == 3
+    assert accesses[0].date_start is not None
+    # A bare slug is rebuilt into a full share URL.
+    assert accesses[1].url == "https://rebrama.com/access/xyz789"
+    assert accesses[1].uses_number is None
+
+
+async def test_list_temporary_accesses_empty() -> None:
+    """A null/empty data payload yields an empty list."""
+
+    def router(method, url, body, headers):
+        return 200, {"data": None}
+
+    client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
+    assert await client.async_list_temporary_accesses() == []

@@ -20,6 +20,20 @@ from .coordinator import RebramaCoordinator
 from .models import AccessPoint, Place
 
 
+class RebramaAccountEntity(CoordinatorEntity[RebramaCoordinator]):
+    """Base entity for account-wide data (the hub device)."""
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(self, coordinator: RebramaCoordinator) -> None:
+        """Initialize the entity, linking it to the account hub device."""
+        super().__init__(coordinator)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, account_device_id(coordinator.user_id))},
+        )
+
+
 class RebramaAccessPointEntity(CoordinatorEntity[RebramaCoordinator]):
     """Base entity for everything tied to a single access point (door/gate)."""
 

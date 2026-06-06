@@ -34,6 +34,10 @@ background — you never have to sign in again.
 - 🚪 **Open buttons** — one button per access point to buzz it open.
 - 📶 **Connectivity sensors** — know whether each access point is online.
 - 🕓 **Last-opened sensors** — see who last opened each place and when.
+- 📇 **Account sensors** — subscription expiry, how many access points are
+  online, and how many share links are active, all on the hub device.
+- 📅 **Temporary-access calendar** — see, create and revoke time-limited share
+  links visually from the Home Assistant calendar panel.
 - ⏱️ **Temporary access services** — create and delete time-limited share links
   from automations (e.g. let a delivery in for one hour).
 - 🩺 **Diagnostics** — downloadable, secret-redacted diagnostics for support.
@@ -42,7 +46,7 @@ background — you never have to sign in again.
 
 | Rebrama concept | Home Assistant representation |
 |---|---|
-| Account | A service device (the hub) named `Rebrama (<phone>)` |
+| Account | A service device (the hub) named `Rebrama (<phone>)`, carrying the account sensors and the temporary-access calendar |
 | Place (building / complex) | A device, with a *Last opened* sensor |
 | Access point (door / gate) | A device with an **Open** button and a **Connectivity** sensor |
 
@@ -93,7 +97,7 @@ Open the integration's **Configure** dialog to set:
 
 | Option | Description |
 |---|---|
-| **Update interval** | How often (in seconds, 30–600) to refresh access points. Leave empty to use the interval recommended by the Rebrama server. |
+| **Update interval** | How often (in seconds, 60–3600) to refresh access-point status. Leave empty for the default of 5 minutes. |
 
 Changing options reloads the integration automatically.
 
@@ -111,6 +115,28 @@ Changing options reloads the integration automatically.
 | `button` | *Open* (one per access point) | Press to open the door/gate. Unavailable when the access point is offline. |
 | `binary_sensor` | *Connectivity* (one per access point) | `on` = online. Diagnostic category. |
 | `sensor` | *Last opened* (one per place) | Timestamp of the most recent opening, with attributes `opened_by`, `opened_by_phone`, `access_point`, `temporary_access`. |
+| `sensor` | *Subscription expires* (account) | Timestamp of when the Rebrama subscription lapses. Diagnostic category. |
+| `sensor` | *Access points online* (account) | How many access points are online, with `total` and `offline` attributes. Diagnostic category. |
+| `sensor` | *Temporary accesses* (account) | How many share links are active, with an `accesses` attribute listing each one (description, URL, validity, max uses). |
+| `calendar` | *Temporary access* (account) | Each active/upcoming share link as a calendar event. Create an event to make a new link; delete one to revoke it. |
+
+## Temporary access
+
+Temporary accesses are time-limited share links that let a guest (a cleaner, a
+delivery, a visitor) open your doors for a bounded window. There are two ways to
+work with them:
+
+- **From the UI — the calendar.** The account's *Temporary access* calendar
+  shows every active and upcoming link as an event. **Add an event** to create a
+  new link, and **delete an event** to revoke it. The event summary becomes the
+  link's description, and its start/end become the validity window. Creating from
+  the calendar grants *every access point the account is allowed to share* and
+  does not set a usage limit — for a specific door or a maximum number of uses,
+  use the action below. The active/active-soon link is also reflected in the
+  *Temporary accesses* sensor (with the share URL in its attributes).
+- **From automations — the actions.** Use `rebrama.create_temporary_access` /
+  `rebrama.delete_temporary_access` for full control (specific access points,
+  usage limits, and the returned share URL).
 
 ## Services / Actions
 
@@ -180,11 +206,24 @@ automation:
 
 ## How data is updated
 
-The integration polls the Rebrama cloud on an interval (defaulting to the
-server-recommended `widgetUpdatePeriod`, clamped to 30–600 s) and refreshes the
-list of places, access-point online status and the latest opening per place. It
-is a `cloud_polling` integration, so changes may be reflected with a short
-delay.
+The integration polls the Rebrama cloud on an interval (default **5 minutes**,
+configurable to 60–3600 s in the integration's options) and refreshes
+access-point online status, the list of places, and the latest opening for each
+place. It is a `cloud_polling` integration, so changes may be reflected with a
+short delay; if you need quicker updates, lower the interval. Opening logs are
+only requested for places you can manage — other places never generate log
+calls.
+
+Two pieces of data are **not** re-fetched on that interval, because they don't
+benefit from it:
+
+- **Subscription expiry** is read once when the integration loads (it only
+  changes when you renew). After renewing, reload the integration to refresh it.
+- **Temporary-access links** are read once on load and then re-fetched only when
+  you create or delete one from Home Assistant (via the calendar or the
+  actions). Each link carries its own expiry, so Home Assistant drops it from
+  the active list locally when it ends — no polling required. Links you create
+  or delete in the **Rebrama mobile app** will appear after the next reload.
 
 ## Troubleshooting
 

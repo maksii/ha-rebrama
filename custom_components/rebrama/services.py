@@ -136,6 +136,7 @@ async def _async_create_temporary_access(call: ServiceCall) -> ServiceResponse:
             translation_placeholders={"error": str(err)},
         ) from err
 
+    await coordinator.async_refresh_temp_accesses()
     url = result.get("tempAccessLink") or result.get("url") or ""
     return {"url": url, "link": _slug(url) if url else ""}
 
@@ -158,6 +159,8 @@ async def _async_delete_temporary_access(call: ServiceCall) -> None:
             translation_key="service_failed",
             translation_placeholders={"error": str(err)},
         ) from err
+
+    await coordinator.async_refresh_temp_accesses()
 
 
 @callback
