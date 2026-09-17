@@ -81,7 +81,7 @@ Place            : { id, name, canManage, isOwner, accessPoints:[AccessPoint] }
 AccessPoint      : { id, name, canShareAccess, isOnline }
 OpenLog          : { id, isTempAccess, userPhone, userInfo, aceessPointName /*sic*/, createdAt /*ISO8601*/ }
 UserPlaceInfo    : { id, phone, isAdmin, info, accessPoints:[{ id, name, hasAccess }] }
-TempAccess       : { link, description, dateStart, dateEnd, usesNumber, url }   // dateStart/End = epoch Long, unit unverified (s|ms)
+TempAccess       : { link, description, dateStart, dateEnd, usesNumber, url }   // dateStart/End = epoch Long in the app DTO; JSON type (number vs string) and unit (s vs ms) never captured live
 TempAccessDetails: TempAccess + { usesNumberLeft, places:[{ place:Place, accessPoints:[AccessPoint] }] }
 settings         : { minTemporaryAccessTimeInterval, maxTemporaryAccessTimeInterval,
                      minTemporaryAccessUsesNumber, maxTemporaryAccessUsesNumber,
@@ -116,7 +116,7 @@ settings         : { minTemporaryAccessTimeInterval, maxTemporaryAccessTimeInter
 
 1. **`tempAccessLink` is a full URL, not a slug.** `POST /api/temp-accesses` returns e.g. `https://rebrama.com/access/<slug>`; `{slug}/info` and `DELETE {slug}` take **only the trailing slug** — parse it off the URL.
 2. **`canManage` gating.** `open-logs`, `users`, `users/{id}` return **1304** unless the place has `canManage:true` — *even for your own place*. `/api/places/user/devices` is the only place-scoped endpoint safe to call unconditionally; gate management/log features on `canManage`.
-3. **`validUntil`** (subscription expiry, ISO8601) is returned by both `check-registration` and `/api/users/me` though the app's DTOs ignore it — lets you skip an extra call.
+3. **`validUntil`** (subscription expiry, wire format never captured live) is returned by both `check-registration` and `/api/users/me` though the app's DTOs ignore it — lets you skip an extra call.
 4. **Temp-access validation is partial server-side:** enforces `dateStart ≥ now` (1504), `dateEnd ≥ dateStart` (1505), `1 ≤ usesNumber ≤ max` (1507/1508), non-empty owned `accessPointIds` (1111/1502). It does **NOT** enforce the min time interval from settings (`usesNumber:null` = unlimited; sub-minute windows are accepted) — enforce that client-side from `/api/settings`.
 5. **Settings units** (`*TimeInterval`, `widgetUpdatePeriod`) are `Long` of unverified unit (s vs ms) — sanity-clamp before using as a poll interval.
 6. **Rate limits unknown** — serialise calls, ≲1 req/s, exponential back-off on 429/5xx.

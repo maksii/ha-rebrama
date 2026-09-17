@@ -17,34 +17,39 @@ from homeassistant.util import dt as dt_util
 from .const import BASE_URL, TEMP_ACCESS_PATH
 
 # Epoch values above this are milliseconds, not seconds (seconds won't reach
-# 1e11 until the year 5138). The temp-access endpoints document their date unit
-# as unverified (s vs ms), so normalize defensively.
+# 1e11 until the year 5138).
 _EPOCH_MS_THRESHOLD = 1e11
 
 
-def _epoch_to_datetime(value: Any) -> datetime | None:
-    """Convert an epoch value (seconds *or* milliseconds) to an aware datetime."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+def _to_datetime(value: Any) -> datetime | None:
+    """Convert a wire timestamp to an aware datetime, or ``None`` if unusable.
+
+    The API's date formats are undocumented and were never captured from a
+    live account, so accept every plausible shape: an epoch number in seconds
+    or milliseconds, the same as a string (bigint columns serialise that way),
+    or an ISO8601 string. Naive values are UTC; ``TIMESTAMP`` sensors reject
+    naive datetimes.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            value = float(value)
+        except ValueError:
+            parsed = dt_util.parse_datetime(value)
+            if parsed is None:
+                return None
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    if not isinstance(value, (int, float)) or value <= 0:
         return None
     seconds = value / 1000 if value > _EPOCH_MS_THRESHOLD else value
     try:
         return dt_util.utc_from_timestamp(seconds)
     except (OverflowError, OSError, ValueError):
         return None
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    """Parse an ISO8601 string into an aware datetime (naive values are UTC).
-
-    ``TIMESTAMP`` sensors reject naive datetimes and the API does not document
-    whether its instants carry an offset, so never hand a naive value on.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    parsed = dt_util.parse_datetime(value)
-    if parsed is None:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,13 +77,14 @@ class Profile:
     def from_api(cls, data: dict[str, Any]) -> Profile:
         """Build from a profile payload.
 
-        ``validUntil`` (ISO8601 subscription expiry) is shipped by the API but
-        ignored by the official app's DTOs; we surface it as a sensor.
+        ``validUntil`` (subscription expiry, wire format unverified) is shipped
+        by the API but ignored by the official app's DTOs; we surface it as a
+        sensor.
         """
         return cls(
             user_id=str(data["id"]),
             phone=str(data.get("phone") or ""),
-            valid_until=_parse_iso(data.get("validUntil")),
+            valid_until=_to_datetime(data.get("validUntil")),
         )
 
 
@@ -143,7 +149,7 @@ class OpenLog:
     def from_api(cls, data: dict[str, Any]) -> OpenLog:
         """Build from one ``open-logs`` item."""
         return cls(
-            created_at=_parse_iso(data.get("createdAt")),
+            created_at=_to_datetime(data.get("createdAt")),
             user_phone=data.get("userPhone"),
             user_info=data.get("userInfo"),
             # The production API ships the field misspelled as ``aceessPointName``;
@@ -190,7 +196,7 @@ class TempAccess:
             slug=slug,
             url=url,
             description=str(data.get("description") or ""),
-            date_start=_epoch_to_datetime(data.get("dateStart")),
-            date_end=_epoch_to_datetime(data.get("dateEnd")),
+            date_start=_to_datetime(data.get("dateStart")),
+            date_end=_to_datetime(data.get("dateEnd")),
             uses_number=int(uses) if isinstance(uses, (int, float)) else None,
         )

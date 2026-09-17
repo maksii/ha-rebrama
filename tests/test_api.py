@@ -6,6 +6,7 @@ import asyncio
 import base64
 from collections.abc import Callable
 import json
+import logging
 import time
 from typing import Any
 
@@ -329,6 +330,37 @@ async def test_list_temporary_accesses_parses_items() -> None:
     assert accesses[1].uses_number is None
 
 
+async def test_list_temporary_accesses_fills_dates_from_details() -> None:
+    """A list item without dates gets them from ``{slug}/info``; failures keep it."""
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/temp-accesses/user"):
+            return 200, {
+                "data": [
+                    {
+                        "url": "https://x/access/full",
+                        "dateStart": 1000,
+                        "dateEnd": 2000,
+                    },
+                    {"url": "https://x/access/bare"},
+                    {"url": "https://x/access/gone"},
+                ]
+            }
+        if url.endswith("/bare/info"):
+            return 200, {"data": {"link": "bare", "dateStart": 3000, "dateEnd": 4000}}
+        return 400, {"error": {"code": 1501, "message": "Temp access not found"}}
+
+    session = FakeSession(router)
+    client = RebramaClient(session, fingerprint="fp", access="acc")
+    accesses = await client.async_list_temporary_accesses()
+
+    ends = [a.date_end and int(a.date_end.timestamp()) for a in accesses]
+    assert ends == [2000, 4000, None]
+    assert accesses[1].url == "https://x/access/bare"
+    # Only the two undated links cost a detail call.
+    assert sum("/info" in r["url"] for r in session.requests) == 2
+
+
 async def test_list_temporary_accesses_empty() -> None:
     """A null/empty data payload yields an empty list."""
 
@@ -503,3 +535,23 @@ def test_token_expiry_ignores_non_numeric_exp() -> None:
     """A JWT whose exp claim is not a number is treated as valid."""
     payload = base64.urlsafe_b64encode(b'{"exp": "soon"}').rstrip(b"=").decode()
     assert RebramaClient._is_token_expired(f"h.{payload}.s") is False
+
+
+async def test_debug_log_shows_responses_but_never_tokens(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Debug logging captures API payloads for support, minus the auth calls."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.rebrama.api")
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/auth/login"):
+            return 201, {"data": {"access": "SECRET-A", "refresh": "SECRET-R"}}
+        return 200, {"data": {"id": "u1", "validUntil": "1780000000"}}
+
+    client = RebramaClient(
+        FakeSession(router), fingerprint="fp", phone="380", password="pw"
+    )
+    await client.async_login()
+    await client.async_get_profile()
+    assert "SECRET" not in caplog.text
+    assert "validUntil" in caplog.text
