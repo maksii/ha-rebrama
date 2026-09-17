@@ -26,6 +26,7 @@ import asyncio
 import base64
 import binascii
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 import json
 import logging
 import time
@@ -174,7 +175,25 @@ class RebramaClient:
     async def async_list_temporary_accesses(self) -> list[TempAccess]:
         """Return all temporary-access share links for the current user."""
         body = await self._request("GET", "api/temp-accesses/user")
-        return [TempAccess.from_api(item) for item in (self._data(body) or [])]
+        accesses = [TempAccess.from_api(item) for item in (self._data(body) or [])]
+        # ponytail: the list item's dates were never seen on a live account. If
+        # they only live on the detail endpoint, take them from there; this
+        # never triggers once the list carries them.
+        return [
+            await self._async_with_dates(access)
+            if access.slug and access.date_end is None
+            else access
+            for access in accesses
+        ]
+
+    async def _async_with_dates(self, access: TempAccess) -> TempAccess:
+        """Fill a link's validity window from ``{slug}/info``; keep it on failure."""
+        try:
+            body = await self._request("GET", f"api/temp-accesses/{access.slug}/info")
+        except RebramaApiError:
+            return access
+        details = TempAccess.from_api(self._data(body) or {})
+        return replace(access, date_start=details.date_start, date_end=details.date_end)
 
     async def async_create_temporary_access(
         self,
@@ -368,6 +387,10 @@ class RebramaClient:
             raise RebramaConnectionError(f"Error calling {path}: {err}") from err
 
         if 200 <= status < 300:
+            if authed:
+                # Auth calls (tokens!) are never logged. Share links are, so a
+                # debug log is for the user's own eyes.
+                _LOGGER.debug("%s %s -> %s", method, path, body)
             return body
 
         # Rebrama returns HTTP 400 for *every* failure (including auth, which is

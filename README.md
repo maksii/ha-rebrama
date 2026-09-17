@@ -270,7 +270,9 @@ value is kept and everything else still updates.
 - **"Rebrama rejected the request: ..."** when creating a share link: the
   server's own validation failed (for example a usage limit above the allowed
   maximum). The message is passed through unchanged.
-- **Need more detail?** Enable debug logging and download diagnostics:
+- **Need more detail?** Enable debug logging (every API response is then
+  logged, share links included, so keep the log private) and download
+  diagnostics:
 
   ```yaml
   logger:
