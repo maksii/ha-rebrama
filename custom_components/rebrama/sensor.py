@@ -11,15 +11,20 @@ from datetime import datetime
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .coordinator import RebramaConfigEntry, RebramaCoordinator
-from .entity import RebramaAccountEntity, RebramaPlaceEntity
-from .models import AccessPoint, OpenLog, Place, TempAccess
+from .entity import (
+    RebramaAccountEntity,
+    RebramaPlaceEntity,
+    async_setup_dynamic_entities,
+)
+from .models import OpenLog, Place, TempAccess
 
-# Read-only data fed by the coordinator — no per-entity update throttling needed.
+# Read-only data fed by the coordinator: no per-entity update throttling needed.
 PARALLEL_UPDATES = 0
 
 
@@ -30,7 +35,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up the account sensors and the per-place last-opened sensors."""
     coordinator = entry.runtime_data
-
     async_add_entities(
         [
             RebramaSubscriptionSensor(coordinator),
@@ -38,24 +42,15 @@ async def async_setup_entry(
             RebramaTemporaryAccessSensor(coordinator),
         ]
     )
-
-    known: set[str] = set()
-
-    @callback
-    def _add_entities() -> None:
-        new: list[RebramaLastOpenedSensor] = []
-        for place in coordinator.data.places.values():
-            # Opening logs are only available for places the user manages.
-            if not place.can_manage:
-                continue
-            if place.id not in known:
-                known.add(place.id)
-                new.append(RebramaLastOpenedSensor(coordinator, place))
-        if new:
-            async_add_entities(new)
-
-    _add_entities()
-    entry.async_on_unload(coordinator.async_add_listener(_add_entities))
+    # Opening logs are only available for places the user manages.
+    async_setup_dynamic_entities(
+        entry,
+        async_add_entities,
+        lambda data: {
+            place.id: place for place in data.places.values() if place.can_manage
+        },
+        RebramaLastOpenedSensor,
+    )
 
 
 class RebramaSubscriptionSensor(RebramaAccountEntity, SensorEntity):
@@ -73,7 +68,7 @@ class RebramaSubscriptionSensor(RebramaAccountEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         """Return the subscription expiry, if known."""
-        return self.coordinator.profile.valid_until
+        return self.coordinator.data.profile.valid_until
 
 
 class RebramaAccessPointsOnlineSensor(RebramaAccountEntity, SensorEntity):
@@ -87,22 +82,17 @@ class RebramaAccessPointsOnlineSensor(RebramaAccountEntity, SensorEntity):
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.user_id}_access_points_online"
 
-    def _access_points(self) -> list[AccessPoint]:
-        return [
-            access_point
-            for place in self.coordinator.data.places.values()
-            for access_point in place.access_points.values()
-        ]
-
     @property
     def native_value(self) -> int:
         """Return the number of online access points."""
-        return sum(1 for ap in self._access_points() if ap.is_online)
+        return sum(
+            1 for ap in self.coordinator.data.access_points.values() if ap.is_online
+        )
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Return the total count and the names of any offline access points."""
-        access_points = self._access_points()
+        access_points = self.coordinator.data.access_points.values()
         return {
             "total": len(access_points),
             "offline": sorted(ap.name for ap in access_points if not ap.is_online),
@@ -110,14 +100,21 @@ class RebramaAccessPointsOnlineSensor(RebramaAccountEntity, SensorEntity):
 
 
 class RebramaTemporaryAccessSensor(RebramaAccountEntity, SensorEntity):
-    """How many temporary-access share links are currently active."""
+    """How many temporary-access share links have not expired yet.
+
+    Expiry is a function of time, not of new data, so the sensor arms a timer
+    for the earliest upcoming expiry and re-evaluates itself when it fires.
+    """
 
     _attr_translation_key = "temporary_accesses"
+    # Share URLs open doors; keep them out of the recorder database.
+    _unrecorded_attributes = frozenset({"accesses"})
 
     def __init__(self, coordinator: RebramaCoordinator) -> None:
         """Initialize the temporary-access sensor."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.user_id}_temporary_accesses"
+        self._expiry_unsub: CALLBACK_TYPE | None = None
 
     def _active(self) -> list[TempAccess]:
         """Return links that have not yet expired (derived locally from dateEnd)."""
@@ -148,6 +145,42 @@ class RebramaTemporaryAccessSensor(RebramaAccountEntity, SensorEntity):
                 for access in self._active()
             ]
         }
+
+    async def async_added_to_hass(self) -> None:
+        """Arm the expiry timer once the entity is live."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._async_cancel_expiry_timer)
+        self._async_schedule_expiry_timer()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Re-arm the expiry timer for the new data, then write the state."""
+        self._async_schedule_expiry_timer()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _async_schedule_expiry_timer(self) -> None:
+        """Schedule a state refresh for the moment the next link expires."""
+        self._async_cancel_expiry_timer()
+        ends = [a.date_end for a in self._active() if a.date_end is not None]
+        if ends:
+            self._expiry_unsub = async_track_point_in_utc_time(
+                self.hass, self._async_on_expiry, min(ends)
+            )
+
+    @callback
+    def _async_on_expiry(self, _now: datetime) -> None:
+        """A link just expired: drop it from the count and arm the next timer."""
+        self._expiry_unsub = None
+        self._async_schedule_expiry_timer()
+        self.async_write_ha_state()
+
+    @callback
+    def _async_cancel_expiry_timer(self) -> None:
+        """Cancel the pending expiry timer, if any."""
+        if self._expiry_unsub is not None:
+            self._expiry_unsub()
+            self._expiry_unsub = None
 
 
 class RebramaLastOpenedSensor(RebramaPlaceEntity, SensorEntity):

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import Callable
 import json
 import time
 from typing import Any
 
+import aiohttp
 import pytest
 
 from custom_components.rebrama.api import (
@@ -26,6 +28,7 @@ class _FakeResponse:
         self._payload = payload
 
     async def json(self, content_type: Any = None) -> Any:
+        await asyncio.sleep(0)  # let concurrent requests interleave like real I/O
         if self._payload is None:
             raise ValueError("no json")
         return self._payload
@@ -334,3 +337,169 @@ async def test_list_temporary_accesses_empty() -> None:
 
     client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
     assert await client.async_list_temporary_accesses() == []
+
+
+async def test_refresh_network_error_is_not_auth_failure() -> None:
+    """A network error during refresh is a connection error, not a re-login."""
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/places/user/devices"):
+            return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+        if url.endswith("/api/auth/refresh"):
+            raise aiohttp.ClientConnectionError("dns")
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router),
+        fingerprint="fp",
+        access="acc",
+        refresh="ref",
+        phone="380990000000",
+        password="pw",
+    )
+    with pytest.raises(RebramaConnectionError):
+        await client.async_get_places()
+
+
+async def test_login_network_error_is_not_auth_failure() -> None:
+    """A refresh rejection followed by a login timeout is still not an auth error."""
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/places/user/devices"):
+            return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+        if url.endswith("/api/auth/refresh"):
+            return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+        if url.endswith("/api/auth/login"):
+            raise TimeoutError
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router),
+        fingerprint="fp",
+        access="acc",
+        refresh="ref",
+        phone="380990000000",
+        password="pw",
+    )
+    with pytest.raises(RebramaConnectionError):
+        await client.async_get_places()
+
+
+async def test_login_rejected_is_auth_failure() -> None:
+    """A rejected password (1203) during re-login is a genuine auth error."""
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/places/user/devices"):
+            return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+        if url.endswith("/api/auth/refresh"):
+            return 400, {"error": {"code": 9999, "message": "malformed"}}
+        if url.endswith("/api/auth/login"):
+            return 400, {"error": {"code": 1203, "message": "Wrong user credentials"}}
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router),
+        fingerprint="fp",
+        access="acc",
+        refresh="ref",
+        phone="380990000000",
+        password="pw",
+    )
+    with pytest.raises(RebramaAuthError):
+        await client.async_get_places()
+
+
+def test_token_expiry_parsing_is_defensive() -> None:
+    """Unparseable or odd JWT payloads are treated as still valid."""
+    payload = base64.urlsafe_b64encode(b"[1, 2]").rstrip(b"=").decode()
+    assert RebramaClient._is_token_expired(f"h.{payload}.s") is False
+    assert RebramaClient._is_token_expired("not-a-jwt") is False
+    assert RebramaClient._is_token_expired(make_jwt(time.time() + 3600)) is False
+    assert RebramaClient._is_token_expired(make_jwt(time.time() + 10)) is True
+
+
+async def test_login_caches_tokens() -> None:
+    """async_login stores the returned pair for subsequent calls."""
+
+    def router(method, url, body, headers):
+        if url.endswith("/api/auth/login"):
+            assert "Authorization" not in headers
+            return 201, {"data": {"access": "a1", "refresh": "r1"}}
+        if url.endswith("/api/users/me"):
+            assert headers["Authorization"] == "Bearer a1"
+            return 200, {"data": {"id": "u1", "phone": "380990000000"}}
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router), fingerprint="fp", phone="380990000000", password="pw"
+    )
+    tokens = await client.async_login()
+    assert (tokens.access, tokens.refresh) == ("a1", "r1")
+    assert client.access_token == "a1"
+    assert (await client.async_get_profile()).user_id == "u1"
+
+
+async def test_auth_responses_without_tokens() -> None:
+    """A refresh without tokens falls back to login; a login without tokens fails."""
+    calls: list[str] = []
+
+    def router(method, url, body, headers):
+        calls.append(url.rsplit("/", 1)[-1])
+        if url.endswith("/api/places/user/devices"):
+            return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+        if url.endswith("/api/auth/refresh"):
+            return 200, {"data": {}}
+        if url.endswith("/api/auth/login"):
+            return 200, {"data": {"access": "only"}}
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router),
+        fingerprint="fp",
+        access="acc",
+        refresh="ref",
+        phone="380990000000",
+        password="pw",
+    )
+    with pytest.raises(RebramaAuthError):
+        await client.async_get_places()
+    assert calls == ["devices", "refresh", "login"]
+
+
+async def test_concurrent_requests_share_one_refresh() -> None:
+    """Two requests hitting 1100 at once trigger a single token refresh."""
+    refreshes = 0
+
+    def router(method, url, body, headers):
+        nonlocal refreshes
+        if url.endswith("/api/places/user/devices"):
+            if headers.get("Authorization") == "Bearer acc":
+                return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
+            return 200, {"data": []}
+        if url.endswith("/api/auth/refresh"):
+            refreshes += 1
+            return 200, {"data": {"access": "newacc", "refresh": "newref"}}
+        raise AssertionError(f"unexpected call {url}")
+
+    client = RebramaClient(
+        FakeSession(router), fingerprint="fp", access="acc", refresh="ref"
+    )
+    await asyncio.gather(client.async_get_places(), client.async_get_places())
+    assert refreshes == 1
+
+
+async def test_unexpected_http_status_is_connection_error() -> None:
+    """A non-envelope failure (e.g. a proxy 404 page) is a retryable error."""
+
+    def router(method, url, body, headers):
+        return 404, None
+
+    client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
+    with pytest.raises(RebramaConnectionError):
+        await client.async_get_settings()
+
+
+def test_token_expiry_ignores_non_numeric_exp() -> None:
+    """A JWT whose exp claim is not a number is treated as valid."""
+    payload = base64.urlsafe_b64encode(b'{"exp": "soon"}').rstrip(b"=").decode()
+    assert RebramaClient._is_token_expired(f"h.{payload}.s") is False

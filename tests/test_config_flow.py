@@ -151,13 +151,15 @@ async def test_reconfigure_success(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_PHONE: "380990000000", CONF_PASSWORD: "newpass"},
+        {CONF_PHONE: "+380 99 111 11 11", CONF_PASSWORD: "newpass"},
     )
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert mock_config_entry.data[CONF_PASSWORD] == "newpass"
+    assert mock_config_entry.data[CONF_PHONE] == "380991111111"
+    assert mock_config_entry.title == "380991111111"
 
 
 async def test_options_flow_scan_interval(
@@ -257,3 +259,19 @@ async def test_reconfigure_wrong_account(
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_account"
+
+
+async def test_reconfigure_invalid_auth(
+    hass: HomeAssistant, flow_client: MagicMock, mock_config_entry: MockConfigEntry
+) -> None:
+    """A wrong password during reconfigure keeps the form open with an error."""
+    mock_config_entry.add_to_hass(hass)
+    flow_client.async_login.side_effect = RebramaApiError(
+        1203, "Wrong user credentials"
+    )
+    result = await mock_config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PHONE: "380990000000", CONF_PASSWORD: "wrong"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}

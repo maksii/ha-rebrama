@@ -1,20 +1,21 @@
-"""Calendar platform for Rebrama — temporary-access share links.
+"""Calendar platform for Rebrama: temporary-access share links.
 
-Each active or upcoming temporary access shows up as a calendar event spanning
-its validity window. Adding an event creates a new share link (for every access
-point the account can share) and deleting an event revokes it, so links can be
-managed entirely from the Home Assistant calendar panel. For per-door control or
-a usage limit, use the ``rebrama.create_temporary_access`` action instead.
+Each temporary access shows up as a calendar event spanning its validity
+window, with the share URL in the event description. Adding an event creates a
+new share link (for every access point the account can share) and deleting an
+event revokes it, so links can be managed entirely from the Home Assistant
+calendar panel. For per-door control or a usage limit, use the
+``rebrama.create_temporary_access`` action instead.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-import logging
 from typing import Any
 
 from homeassistant.components.calendar import (
     EVENT_END,
+    EVENT_RRULE,
     EVENT_START,
     EVENT_SUMMARY,
     CalendarEntity,
@@ -22,11 +23,10 @@ from homeassistant.components.calendar import (
     CalendarEvent,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .api import RebramaAuthError, RebramaError
 from .const import DOMAIN
 from .coordinator import RebramaConfigEntry, RebramaCoordinator
 from .entity import RebramaAccountEntity
@@ -35,22 +35,12 @@ from .models import TempAccess
 # Creating/deleting share links are write actions; serialise them.
 PARALLEL_UPDATES = 1
 
-_LOGGER = logging.getLogger(__name__)
 
-
-def _to_epoch(value: datetime | date) -> int:
-    """Convert a calendar date/datetime to epoch seconds in the local zone."""
-    if isinstance(value, datetime):
-        moment = (
-            value
-            if value.tzinfo is not None
-            else value.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-        )
-    else:  # all-day event: take local midnight
-        moment = datetime(
-            value.year, value.month, value.day, tzinfo=dt_util.DEFAULT_TIME_ZONE
-        )
-    return int(moment.timestamp())
+def _to_datetime(value: datetime | date) -> datetime:
+    """Return an aware datetime; an all-day date becomes local midnight."""
+    if not isinstance(value, datetime):
+        value = datetime(value.year, value.month, value.day)
+    return dt_util.as_utc(value)
 
 
 async def async_setup_entry(
@@ -63,7 +53,7 @@ async def async_setup_entry(
 
 
 class RebramaTemporaryAccessCalendar(RebramaAccountEntity, CalendarEntity):
-    """A calendar of active and upcoming temporary-access share links."""
+    """A calendar of temporary-access share links."""
 
     _attr_translation_key = "temporary_access"
     _attr_supported_features = (
@@ -119,45 +109,27 @@ class RebramaTemporaryAccessCalendar(RebramaAccountEntity, CalendarEntity):
 
     async def async_create_event(self, **kwargs: Any) -> None:
         """Create a temporary access spanning the event for all shareable doors."""
-        start = _to_epoch(kwargs[EVENT_START])
-        end = _to_epoch(kwargs[EVENT_END])
-        if end <= start:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="invalid_time_range"
+        if kwargs.get(EVENT_RRULE):
+            # A share link is a one-off; silently creating one for the first
+            # occurrence only would mislead the user.
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="recurrence_not_supported"
             )
-
-        access_point_ids = sorted(
+        access_point_ids = [
             access_point.id
-            for place in self.coordinator.data.places.values()
-            for access_point in place.access_points.values()
+            for access_point in self.coordinator.data.access_points.values()
             if access_point.can_share_access
-        )
+        ]
         if not access_point_ids:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="no_shareable_access_points",
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="no_shareable_access_points"
             )
-
-        try:
-            await self.coordinator.client.async_create_temporary_access(
-                access_point_ids=access_point_ids,
-                date_start=start,
-                date_end=end,
-                description=kwargs.get(EVENT_SUMMARY) or "Home Assistant",
-                uses_number=None,
-            )
-        except RebramaAuthError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="auth_failed"
-            ) from err
-        except RebramaError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="service_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
-
-        await self.coordinator.async_refresh_temp_accesses()
+        await self.coordinator.async_create_temporary_access(
+            access_point_ids,
+            start=_to_datetime(kwargs[EVENT_START]),
+            end=_to_datetime(kwargs[EVENT_END]),
+            description=kwargs.get(EVENT_SUMMARY) or "Home Assistant",
+        )
 
     async def async_delete_event(
         self,
@@ -166,17 +138,4 @@ class RebramaTemporaryAccessCalendar(RebramaAccountEntity, CalendarEntity):
         recurrence_range: str | None = None,
     ) -> None:
         """Delete the temporary access identified by ``uid`` (its slug)."""
-        try:
-            await self.coordinator.client.async_delete_temporary_access(uid)
-        except RebramaAuthError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="auth_failed"
-            ) from err
-        except RebramaError as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="service_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
-
-        await self.coordinator.async_refresh_temp_accesses()
+        await self.coordinator.async_delete_temporary_access(uid)

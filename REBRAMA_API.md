@@ -125,6 +125,9 @@ settings         : { minTemporaryAccessTimeInterval, maxTemporaryAccessTimeInter
 Firebase (FCM push, Realtime DB at `…europe-west1.firebasedatabase.app`) is wired for analytics/crashlytics only — no Firebase Auth, no user-data REST surface. The `rebrama.com` REST API is authoritative.
 
 ## Live probes
+
+The probe scripts below live in the maintainer's private analysis folder and are **not** part of this repository (they need real account credentials).
+
 - `rebrama_test.py` — happy-path E2E (login → refresh → me → settings → places → temp-access create/info/delete → open). Set `REBRAMA_OPEN=1` to actually open a door; otherwise step 9 is dry-run.
 - `rebrama_error_test.py` — 54-case validation/auth/not-found probe → `_analysis/error_cases.json`. Side-effect-free except section D (rotates tokens) and F5/F6 (create temp-accesses not auto-cleaned).
 

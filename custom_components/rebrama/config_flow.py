@@ -163,7 +163,11 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
                         },
                     )
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_USER_SCHEMA, user_input
+            ),
+            errors=errors,
         )
 
     async def async_step_reauth(
@@ -231,6 +235,7 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._abort_if_unique_id_mismatch(reason="wrong_account")
                     return self.async_update_reload_and_abort(
                         reconfigure_entry,
+                        title=phone,
                         data_updates={
                             CONF_PHONE: phone,
                             CONF_PASSWORD: user_input[CONF_PASSWORD],
@@ -239,17 +244,15 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-        default_phone = reconfigure_entry.data.get(CONF_PHONE, "")
-        if user_input is not None:
-            default_phone = user_input.get(CONF_PHONE, default_phone)
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_PHONE, default=default_phone): _PHONE_SELECTOR,
-                vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
-            }
-        )
+        suggested = user_input or {
+            CONF_PHONE: reconfigure_entry.data.get(CONF_PHONE, "")
+        }
         return self.async_show_form(
-            step_id="reconfigure", data_schema=schema, errors=errors
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_USER_SCHEMA, suggested
+            ),
+            errors=errors,
         )
 
     @staticmethod

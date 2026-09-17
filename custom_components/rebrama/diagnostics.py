@@ -80,9 +80,7 @@ async def async_get_config_entry_diagnostics(
             else None
         ),
         "subscription_valid_until": (
-            coordinator.profile.valid_until.isoformat()
-            if coordinator.profile.valid_until
-            else None
+            data.profile.valid_until.isoformat() if data.profile.valid_until else None
         ),
         "temporary_accesses": temporary_accesses,
         "places": async_redact_data(places, TO_REDACT),
