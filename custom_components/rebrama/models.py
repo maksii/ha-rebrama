@@ -9,7 +9,7 @@ when nothing changed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -24,13 +24,27 @@ _EPOCH_MS_THRESHOLD = 1e11
 
 def _epoch_to_datetime(value: Any) -> datetime | None:
     """Convert an epoch value (seconds *or* milliseconds) to an aware datetime."""
-    if not isinstance(value, (int, float)) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
     seconds = value / 1000 if value > _EPOCH_MS_THRESHOLD else value
     try:
         return dt_util.utc_from_timestamp(seconds)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse an ISO8601 string into an aware datetime (naive values are UTC).
+
+    ``TIMESTAMP`` sensors reject naive datetimes and the API does not document
+    whether its instants carry an offset, so never hand a naive value on.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,11 +75,10 @@ class Profile:
         ``validUntil`` (ISO8601 subscription expiry) is shipped by the API but
         ignored by the official app's DTOs; we surface it as a sensor.
         """
-        valid = data.get("validUntil")
         return cls(
             user_id=str(data["id"]),
             phone=str(data.get("phone") or ""),
-            valid_until=dt_util.parse_datetime(valid) if valid else None,
+            valid_until=_parse_iso(data.get("validUntil")),
         )
 
 
@@ -129,9 +142,8 @@ class OpenLog:
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> OpenLog:
         """Build from one ``open-logs`` item."""
-        created = data.get("createdAt")
         return cls(
-            created_at=dt_util.parse_datetime(created) if created else None,
+            created_at=_parse_iso(data.get("createdAt")),
             user_phone=data.get("userPhone"),
             user_info=data.get("userInfo"),
             # The production API ships the field misspelled as ``aceessPointName``;

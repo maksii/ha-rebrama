@@ -1,8 +1,13 @@
-"""Base entities for the Rebrama integration."""
+"""Base entities and shared platform helpers for the Rebrama integration."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -16,8 +21,66 @@ from .const import (
     account_device_id,
     place_device_id,
 )
-from .coordinator import RebramaCoordinator
+from .coordinator import RebramaConfigEntry, RebramaCoordinator, RebramaData
 from .models import AccessPoint, Place
+
+
+@callback
+def async_setup_dynamic_entities[T](
+    entry: RebramaConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    select: Callable[[RebramaData], Mapping[str, T]],
+    factory: Callable[[RebramaCoordinator, T], Entity],
+) -> None:
+    """Add one entity per item of ``select(data)`` and keep tracking the items.
+
+    New items get entities on the first coordinator update that reports them.
+    Items that disappear are forgotten, so if they come back later (a door
+    whose access was revoked and re-granted) their entities are created again
+    instead of staying gone until the next reload.
+    """
+    coordinator = entry.runtime_data
+    known: set[str] = set()
+
+    @callback
+    def _sync() -> None:
+        nonlocal known
+        current = select(coordinator.data)
+        new_ids = current.keys() - known
+        known = set(current)
+        if new_ids:
+            async_add_entities(
+                factory(coordinator, current[item_id]) for item_id in new_ids
+            )
+
+    _sync()
+    entry.async_on_unload(coordinator.async_add_listener(_sync))
+
+
+def _linked_device_info(
+    coordinator: RebramaCoordinator,
+    *,
+    identifier: str,
+    name: str,
+    model: str,
+    parent: str,
+    suggested_area: str | None = None,
+) -> DeviceInfo:
+    """Build the device info of a device that hangs off a parent device."""
+    info = DeviceInfo(
+        identifiers={(DOMAIN, identifier)},
+        name=name,
+        manufacturer=MANUFACTURER,
+        model=model,
+        configuration_url=CONFIGURATION_URL,
+    )
+    if suggested_area:
+        info["suggested_area"] = suggested_area
+    # The parent devices are registered by the integration before any
+    # platform loads, so the lookup only fails on a corrupt registry.
+    if (parent_id := coordinator.device_id(parent)) is not None:
+        info["via_device_id"] = parent_id
+    return info
 
 
 class RebramaAccountEntity(CoordinatorEntity[RebramaCoordinator]):
@@ -47,14 +110,13 @@ class RebramaAccessPointEntity(CoordinatorEntity[RebramaCoordinator]):
         super().__init__(coordinator, context=access_point.id)
         self._ap_id = access_point.id
         self._place_id = access_point.place_id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, access_point_device_id(access_point.id))},
+        self._attr_device_info = _linked_device_info(
+            coordinator,
+            identifier=access_point_device_id(access_point.id),
             name=access_point.name,
-            manufacturer=MANUFACTURER,
             model=MODEL_ACCESS_POINT,
-            via_device=(DOMAIN, place_device_id(access_point.place_id)),
+            parent=place_device_id(access_point.place_id),
             suggested_area=access_point.place_name or None,
-            configuration_url=CONFIGURATION_URL,
         )
 
     @property
@@ -81,13 +143,12 @@ class RebramaPlaceEntity(CoordinatorEntity[RebramaCoordinator]):
         """Initialize the entity and its device entry."""
         super().__init__(coordinator, context=place.id)
         self._place_id = place.id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, place_device_id(place.id))},
+        self._attr_device_info = _linked_device_info(
+            coordinator,
+            identifier=place_device_id(place.id),
             name=place.name,
-            manufacturer=MANUFACTURER,
             model=MODEL_PLACE,
-            via_device=(DOMAIN, account_device_id(coordinator.user_id)),
-            configuration_url=CONFIGURATION_URL,
+            parent=account_device_id(coordinator.user_id),
         )
 
     @property

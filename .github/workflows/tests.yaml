@@ -2,21 +2,51 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+  schedule:
+    # Weekly run against the newest Home Assistant release, so an HA change
+    # that breaks the integration shows up before a user reports it. GitHub
+    # pauses scheduled runs after 60 days without commits; any push re-enables
+    # them.
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          # Home Assistant 2026.3+ (and therefore the current test harness)
+          # requires Python 3.14; an older interpreter silently resolves to an
+          # old Home Assistant release.
+          python-version: "3.14"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements_test.txt
       - name: Run tests
-        run: |
-          pytest --cov=custom_components.rebrama --cov-report=term-missing
+        run: pytest

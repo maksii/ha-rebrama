@@ -13,7 +13,7 @@ After a one-time sign-in with your phone number and password, the integration
 **discovers all of your places and access points automatically**, keeps them up
 to date, and lets you open any door or gate from a dashboard, automation or
 voice assistant. Authentication tokens are refreshed transparently in the
-background — you never have to sign in again.
+background, so you never have to sign in again.
 
 > **Unofficial integration.** This project is not affiliated with or endorsed by
 > Rebrama. It talks to the same private REST API the official mobile app uses
@@ -23,31 +23,31 @@ background — you never have to sign in again.
 
 ## Features
 
-- 🔑 **UI configuration** — set up entirely from *Settings → Devices & Services*; no YAML.
-- 🔄 **Hands-off authentication** — access tokens are refreshed proactively and
+- 🔑 **UI configuration**: set up entirely from *Settings → Devices & Services*; no YAML.
+- 🔄 **Hands-off authentication**: access tokens are refreshed proactively and
   on demand; if the refresh token ever expires the integration silently logs in
   again with your stored credentials. Re-authentication is only ever requested
-  if your password actually changes.
-- 🧭 **Automatic discovery** — every place and access point on your account is
+  if your password actually changes. A flaky internet connection never triggers it.
+- 🧭 **Automatic discovery**: every place and access point on your account is
   added as a Home Assistant device, and the list is kept in sync (new doors
-  appear, removed ones are cleaned up).
-- 🚪 **Open buttons** — one button per access point to buzz it open.
-- 📶 **Connectivity sensors** — know whether each access point is online.
-- 🕓 **Last-opened sensors** — see who last opened each place and when.
-- 📇 **Account sensors** — subscription expiry, how many access points are
+  appear, removed ones are cleaned up, re-granted ones come back).
+- 🚪 **Open buttons**: one button per access point to buzz it open.
+- 📶 **Connectivity sensors**: know whether each access point is online.
+- 🕓 **Last-opened sensors**: see who last opened each place and when.
+- 📇 **Account sensors**: subscription expiry, how many access points are
   online, and how many share links are active, all on the hub device.
-- 📅 **Temporary-access calendar** — see, create and revoke time-limited share
+- 📅 **Temporary-access calendar**: see, create and revoke time-limited share
   links visually from the Home Assistant calendar panel.
-- ⏱️ **Temporary access services** — create and delete time-limited share links
+- ⏱️ **Temporary access actions**: create and delete time-limited share links
   from automations (e.g. let a delivery in for one hour).
-- 🩺 **Diagnostics** — downloadable, secret-redacted diagnostics for support.
+- 🩺 **Diagnostics**: downloadable, secret-redacted diagnostics for support.
 
 ## Supported devices
 
 | Rebrama concept | Home Assistant representation |
 |---|---|
 | Account | A service device (the hub) named `Rebrama (<phone>)`, carrying the account sensors and the temporary-access calendar |
-| Place (building / complex) | A device, with a *Last opened* sensor |
+| Place (building / complex) | A device, with a *Last opened* sensor when you manage the place |
 | Access point (door / gate) | A device with an **Open** button and a **Connectivity** sensor |
 
 Access-point devices are linked to their place, and places to the account, so
@@ -55,9 +55,9 @@ the relationships are visible in the device hierarchy.
 
 ## Requirements
 
-- Home Assistant **2025.1.0** or newer.
+- Home Assistant **2026.8.0** or newer.
 - A registered Rebrama account. **Create the account in the official Rebrama
-  mobile app first** — this integration can sign in but cannot register a new
+  mobile app first**: this integration can sign in but cannot register a new
   account.
 - Your Rebrama **phone number** and **password**.
 
@@ -97,7 +97,7 @@ Open the integration's **Configure** dialog to set:
 
 | Option | Description |
 |---|---|
-| **Update interval** | How often (in seconds, 60–3600) to refresh access-point status. Leave empty for the default of 5 minutes. |
+| **Update interval** | How often (in seconds, 60–3600) to refresh access-point status, share links and the latest opening. Leave empty for the default of 5 minutes. |
 
 Changing options reloads the integration automatically.
 
@@ -105,7 +105,7 @@ Changing options reloads the integration automatically.
 
 - If your stored credentials stop working, Home Assistant raises a
   **re-authentication** prompt asking for your password again.
-- Use the device/entry **Reconfigure** option to change the phone number or
+- Use the entry's **Reconfigure** option to change the phone number or
   password proactively (it must remain the same Rebrama account).
 
 ## Entities
@@ -114,11 +114,11 @@ Changing options reloads the integration automatically.
 |---|---|---|
 | `button` | *Open* (one per access point) | Press to open the door/gate. Unavailable when the access point is offline. |
 | `binary_sensor` | *Connectivity* (one per access point) | `on` = online. Diagnostic category. |
-| `sensor` | *Last opened* (one per place) | Timestamp of the most recent opening, with attributes `opened_by`, `opened_by_phone`, `access_point`, `temporary_access`. |
+| `sensor` | *Last opened* (one per managed place) | Timestamp of the most recent opening, with attributes `opened_by`, `opened_by_phone`, `access_point`, `temporary_access`. |
 | `sensor` | *Subscription expires* (account) | Timestamp of when the Rebrama subscription lapses. Diagnostic category. |
 | `sensor` | *Access points online* (account) | How many access points are online, with `total` and `offline` attributes. Diagnostic category. |
-| `sensor` | *Temporary accesses* (account) | How many share links are active, with an `accesses` attribute listing each one (description, URL, validity, max uses). |
-| `calendar` | *Temporary access* (account) | Each active/upcoming share link as a calendar event. Create an event to make a new link; delete one to revoke it. |
+| `sensor` | *Temporary accesses* (account) | How many share links have not expired yet, with an `accesses` attribute listing each one (description, URL, validity, max uses). The count drops the moment a link expires. |
+| `calendar` | *Temporary access* (account) | Each share link as a calendar event (the share URL is in the event description). Create an event to make a new link; delete one to revoke it. |
 
 ## Temporary access
 
@@ -126,17 +126,28 @@ Temporary accesses are time-limited share links that let a guest (a cleaner, a
 delivery, a visitor) open your doors for a bounded window. There are two ways to
 work with them:
 
-- **From the UI — the calendar.** The account's *Temporary access* calendar
-  shows every active and upcoming link as an event. **Add an event** to create a
-  new link, and **delete an event** to revoke it. The event summary becomes the
-  link's description, and its start/end become the validity window. Creating from
-  the calendar grants *every access point the account is allowed to share* and
-  does not set a usage limit — for a specific door or a maximum number of uses,
-  use the action below. The active/active-soon link is also reflected in the
+- **From the UI: the calendar.** The account's *Temporary access* calendar
+  shows every link as an event, with the share URL in the event description.
+  **Add an event** to create a new link, and **delete an event** to revoke it.
+  The event summary becomes the link's description, and its start/end become
+  the validity window (all-day events run from midnight to midnight, local
+  time). Creating from the calendar grants *every access point the account is
+  allowed to share* and does not set a usage limit; for a specific door or a
+  maximum number of uses, use the action below. Recurring events are rejected,
+  because a share link is a one-off. Links are also reflected in the
   *Temporary accesses* sensor (with the share URL in its attributes).
-- **From automations — the actions.** Use `rebrama.create_temporary_access` /
+- **From automations: the actions.** Use `rebrama.create_temporary_access` /
   `rebrama.delete_temporary_access` for full control (specific access points,
   usage limits, and the returned share URL).
+
+Either way, a start time in the past means *right now* (the Rebrama API refuses
+links that start in the past, and calendar dialogs and `now()` templates
+routinely produce a start a few seconds ago). The end time must be in the
+future. Access points that Rebrama does not let you share are refused with a
+clear message before anything is sent.
+
+Links created or revoked in the **Rebrama mobile app** show up in Home
+Assistant on the next update (5 minutes by default).
 
 ## Services / Actions
 
@@ -150,18 +161,22 @@ action: rebrama.create_temporary_access
 data:
   access_points:
     - button.front_gate_open
-  start: "2026-06-06 12:00:00"
-  end: "2026-06-06 13:00:00"
+  start: "{{ now() }}"
+  end: "{{ now() + timedelta(hours=1) }}"
   description: "Cleaner"
   uses: 1          # optional
 response_variable: share
 ```
 
-All selected access points must belong to the same Rebrama account.
+All selected access points must belong to the same Rebrama account. Invalid
+input (bad time range, an access point that cannot be shared, or a request the
+Rebrama server rejects) fails with a validation error; network problems fail
+with a regular error, so automations can tell the two apart.
 
 ### `rebrama.delete_temporary_access`
 
-Delete a temporary access by its share URL or slug.
+Delete a temporary access by its share URL or slug. Deleting a link that is
+already gone counts as success.
 
 ```yaml
 action: rebrama.delete_temporary_access
@@ -204,38 +219,58 @@ automation:
             opened {{ state_attr('sensor.home_last_opened', 'access_point') }}.
 ```
 
+Send a guest a one-hour link:
+
+```yaml
+automation:
+  - alias: "Guest link"
+    triggers:
+      - trigger: state
+        entity_id: input_button.guest_link
+    actions:
+      - action: rebrama.create_temporary_access
+        data:
+          access_points:
+            - button.front_gate_open
+          start: "{{ now() }}"
+          end: "{{ now() + timedelta(hours=1) }}"
+          description: "Guest"
+          uses: 1
+        response_variable: share
+      - action: notify.mobile_app
+        data:
+          message: "Your door link: {{ share.url }}"
+```
+
 ## How data is updated
 
 The integration polls the Rebrama cloud on an interval (default **5 minutes**,
-configurable to 60–3600 s in the integration's options) and refreshes
-access-point online status, the list of places, and the latest opening for each
-place. It is a `cloud_polling` integration, so changes may be reflected with a
-short delay; if you need quicker updates, lower the interval. Opening logs are
-only requested for places you can manage — other places never generate log
-calls.
+configurable to 60–3600 s in the integration's options). Every poll refreshes
+the list of places and access points (including online status), the
+subscription expiry, the temporary-access links, and the latest opening for
+each place you manage (other places never generate log calls). It is a
+`cloud_polling` integration, so changes may be reflected with a short delay; if
+you need quicker updates, lower the interval.
 
-Two pieces of data are **not** re-fetched on that interval, because they don't
-benefit from it:
-
-- **Subscription expiry** is read once when the integration loads (it only
-  changes when you renew). After renewing, reload the integration to refresh it.
-- **Temporary-access links** are read once on load and then re-fetched only when
-  you create or delete one from Home Assistant (via the calendar or the
-  actions). Each link carries its own expiry, so Home Assistant drops it from
-  the active list locally when it ends — no polling required. Links you create
-  or delete in the **Rebrama mobile app** will appear after the next reload.
+Pressing an *Open* button and creating or deleting a share link from Home
+Assistant refresh the affected data immediately. If one of the secondary
+requests fails (for example the opening log for one place), the last known
+value is kept and everything else still updates.
 
 ## Troubleshooting
 
-- **"No Rebrama account exists for this phone number."** — Register the account
+- **"No Rebrama account exists for this phone number."**: register the account
   in the Rebrama mobile app first, then add the integration.
-- **"Invalid phone number or password."** — Double-check the credentials you use
+- **"Invalid phone number or password."**: double-check the credentials you use
   in the app. Include the country code in the phone number.
-- **Re-authentication keeps appearing** — Your password likely changed; enter
+- **Re-authentication keeps appearing**: your password likely changed; enter
   the new one when prompted.
-- **A door's *Open* button is unavailable** — Its access point is reported
+- **A door's *Open* button is unavailable**: its access point is reported
   offline (`Connectivity` sensor is `off`).
-- **Need more detail?** — Enable debug logging and download diagnostics:
+- **"Rebrama rejected the request: ..."** when creating a share link: the
+  server's own validation failed (for example a usage limit above the allowed
+  maximum). The message is passed through unchanged.
+- **Need more detail?** Enable debug logging and download diagnostics:
 
   ```yaml
   logger:
@@ -252,6 +287,8 @@ benefit from it:
   channel are not used; status is obtained by polling.
 - Rate limits are undocumented; the integration polls conservatively and
   serializes open commands.
+- The share-link list does not include how many uses a link has left; only
+  the configured maximum is shown.
 
 ## Removing the integration
 
@@ -266,15 +303,36 @@ config-entry storage (the same place all integration credentials live) and used
 only to obtain fresh tokens if the refresh token ever expires. Protect your
 Home Assistant configuration directory accordingly.
 
+Share links open doors for anyone who has them. They are exposed in the
+*Temporary accesses* sensor's attributes and in the calendar event descriptions
+(that is how you get them to your guest), but they are kept out of the recorder
+database and out of diagnostics downloads.
+
 ## Development
+
+Home Assistant 2026.3 and newer require **Python 3.14**.
 
 ```bash
 python -m pip install -r requirements_test.txt
 pytest
+ruff check . && ruff format --check .
 ```
 
 Brand images under `custom_components/rebrama/brand/` are generated by
 `scripts/generate_brand_assets.py`.
+
+### Releasing
+
+HACS offers users whatever GitHub releases exist, so a release is what ships a
+fix:
+
+1. Bump `version` in `custom_components/rebrama/manifest.json`.
+2. Merge to `main` with the checks green.
+3. Publish a release whose tag matches the version:
+   `gh release create v1.2.0 --generate-notes --title v1.2.0`.
+
+The scheduled workflows stop running after 60 days without commits (a GitHub
+rule); the next push re-enables them.
 
 ## Credits
 

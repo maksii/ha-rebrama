@@ -11,9 +11,6 @@ dist/
 venv/
 env/
 
-# Local-dev wheelhouse (Windows lru-dict workaround)
-.wheelhouse/
-
 # Testing / coverage
 .pytest_cache/
 .mypy_cache/

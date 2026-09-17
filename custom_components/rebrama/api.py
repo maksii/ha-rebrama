@@ -4,11 +4,15 @@ The client owns the access/refresh token pair and keeps it valid transparently:
 
 * **Proactively** — before every authenticated request it inspects the access
   token's ``exp`` claim and refreshes if it is about to expire.
-* **Reactively** — if a request still returns ``401`` it refreshes once and
-  retries the original call.
+* **Reactively** — if a request is still rejected as unauthorized (error code
+  1100) it refreshes once and retries the original call.
 * **Resiliently** — if the refresh token itself is rejected it falls back to a
   full ``phone + password`` re-login (when those are stored), so the user never
   has to re-authenticate manually for routine token expiry.
+
+Only a *rejection by the server* counts as an auth failure. Network problems
+during a refresh or re-login surface as ``RebramaConnectionError`` so a flaky
+connection never triggers a spurious re-authentication prompt.
 
 A refresh persists the rotated pair back to the config entry through the
 ``token_updater`` callback. All refreshes are serialised by a lock so concurrent
@@ -226,18 +230,20 @@ class RebramaClient:
             if self._refresh:
                 try:
                     tokens = await self._post_refresh()
-                except RebramaError as err:
+                except (RebramaAuthError, RebramaApiError) as err:
+                    # The server rejected the refresh token; connection errors
+                    # propagate untouched so they stay retryable.
                     _LOGGER.debug(
-                        "Token refresh failed (%s); trying password re-login", err
+                        "Token refresh rejected (%s); trying password re-login", err
                     )
 
             if tokens is None:
-                # Last resort: full re-login. Any failure here (e.g. the password
+                # Last resort: full re-login. A rejection here (e.g. the password
                 # was changed) is a genuine auth problem -> surface as an auth
                 # error so the coordinator starts the reauth flow.
                 try:
                     tokens = await self._post_login()
-                except RebramaError as err:
+                except RebramaApiError as err:
                     raise RebramaAuthError(f"Re-authentication failed: {err}") from err
 
             self._access = tokens.access
@@ -288,6 +294,8 @@ class RebramaClient:
             payload_b64 += "=" * (-len(payload_b64) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
             return False
         exp = payload.get("exp")
         if not isinstance(exp, (int, float)):

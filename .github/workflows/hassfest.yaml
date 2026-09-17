@@ -2,10 +2,21 @@ name: Validate with hassfest
 
 on:
   push:
+    branches: [main]
   pull_request:
   schedule:
+    # Early warning when a Home Assistant change breaks validation. Note that
+    # GitHub pauses scheduled runs after 60 days without commits; any push
+    # re-enables them.
     - cron: "0 0 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:

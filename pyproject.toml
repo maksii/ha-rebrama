@@ -6,6 +6,14 @@ addopts = "--cov=custom_components.rebrama --cov-report=term-missing"
 [tool.coverage.run]
 source = ["custom_components/rebrama"]
 
+[tool.mypy]
+# Mirrors Home Assistant core's strict-typing settings for integrations.
+python_version = "3.14"
+strict = true
+implicit_reexport = true
+warn_unreachable = true
+files = ["custom_components/rebrama"]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 88

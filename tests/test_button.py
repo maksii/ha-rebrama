@@ -12,7 +12,7 @@ from homeassistant.helpers import entity_registry as er
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rebrama.api import RebramaError
+from custom_components.rebrama.api import RebramaAuthError, RebramaError
 from custom_components.rebrama.const import DOMAIN
 
 
@@ -62,3 +62,21 @@ async def test_press_api_error_raises(
         await hass.services.async_call(
             BUTTON_DOMAIN, SERVICE_PRESS, {ATTR_ENTITY_ID: entity_id}, blocking=True
         )
+
+
+async def test_press_auth_error_starts_reauth(
+    hass: HomeAssistant,
+    patch_client: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """An unrecoverable auth error while opening starts the reauth flow."""
+    patch_client.async_open.side_effect = RebramaAuthError("dead")
+    entity_id = await _setup(hass, mock_config_entry)
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            BUTTON_DOMAIN, SERVICE_PRESS, {ATTR_ENTITY_ID: entity_id}, blocking=True
+        )
+    assert err.value.translation_key == "auth_failed"
+    await hass.async_block_till_done()
+    flows = hass.config_entries.flow.async_progress()
+    assert any(flow["context"]["source"] == "reauth" for flow in flows)

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
-import logging
 
+from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
@@ -16,10 +15,8 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er
-from homeassistant.util import dt as dt_util
 import voluptuous as vol
 
-from .api import RebramaAuthError, RebramaError
 from .const import (
     ATTR_ACCESS_POINTS,
     ATTR_CONFIG_ENTRY_ID,
@@ -34,11 +31,11 @@ from .const import (
 )
 from .coordinator import RebramaConfigEntry
 
-_LOGGER = logging.getLogger(__name__)
-
 CREATE_TEMPORARY_ACCESS_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_ACCESS_POINTS): vol.All(cv.ensure_list, [cv.entity_id]),
+        vol.Required(ATTR_ACCESS_POINTS): vol.All(
+            cv.ensure_list, [cv.entity_id], vol.Length(min=1)
+        ),
         vol.Required(ATTR_START): cv.datetime,
         vol.Required(ATTR_END): cv.datetime,
         vol.Optional(ATTR_DESCRIPTION, default="Home Assistant"): cv.string,
@@ -52,13 +49,6 @@ DELETE_TEMPORARY_ACCESS_SCHEMA = vol.Schema(
         vol.Required(ATTR_LINK): cv.string,
     }
 )
-
-
-def _epoch(value: datetime) -> int:
-    """Convert a (possibly naive) datetime to epoch seconds."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-    return int(value.timestamp())
 
 
 def _slug(link: str) -> str:
@@ -91,17 +81,16 @@ async def _async_create_temporary_access(call: ServiceCall) -> ServiceResponse:
         if (
             entry is None
             or entry.platform != DOMAIN
-            or entry.domain != "button"
+            or entry.domain != BUTTON_DOMAIN
             or entry.config_entry_id is None
-            or not entry.unique_id.endswith("_open")
+            or not (entry.unique_id or "").endswith("_open")
         ):
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="invalid_access_point",
                 translation_placeholders={"entity_id": entity_id},
             )
-        access_point_id = entry.unique_id.removesuffix("_open")
-        access_points[entry.config_entry_id].add(access_point_id)
+        access_points[entry.config_entry_id].add(entry.unique_id.removesuffix("_open"))
 
     if len(access_points) != 1:
         raise ServiceValidationError(
@@ -109,58 +98,21 @@ async def _async_create_temporary_access(call: ServiceCall) -> ServiceResponse:
         )
 
     config_entry_id, ap_ids = next(iter(access_points.items()))
-    start = _epoch(call.data[ATTR_START])
-    end = _epoch(call.data[ATTR_END])
-    if end <= start:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="invalid_time_range"
-        )
-
     coordinator = _loaded_entry(hass, config_entry_id).runtime_data
-    try:
-        result = await coordinator.client.async_create_temporary_access(
-            access_point_ids=sorted(ap_ids),
-            date_start=start,
-            date_end=end,
-            description=call.data[ATTR_DESCRIPTION],
-            uses_number=call.data.get(ATTR_USES),
-        )
-    except RebramaAuthError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="auth_failed"
-        ) from err
-    except RebramaError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="service_failed",
-            translation_placeholders={"error": str(err)},
-        ) from err
-
-    await coordinator.async_refresh_temp_accesses()
-    url = result.get("tempAccessLink") or result.get("url") or ""
+    url = await coordinator.async_create_temporary_access(
+        ap_ids,
+        start=call.data[ATTR_START],
+        end=call.data[ATTR_END],
+        description=call.data[ATTR_DESCRIPTION],
+        uses=call.data.get(ATTR_USES),
+    )
     return {"url": url, "link": _slug(url) if url else ""}
 
 
 async def _async_delete_temporary_access(call: ServiceCall) -> None:
     """Delete a temporary access by its link/slug."""
-    hass = call.hass
-    coordinator = _loaded_entry(hass, call.data[ATTR_CONFIG_ENTRY_ID]).runtime_data
-    try:
-        await coordinator.client.async_delete_temporary_access(
-            _slug(call.data[ATTR_LINK])
-        )
-    except RebramaAuthError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="auth_failed"
-        ) from err
-    except RebramaError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="service_failed",
-            translation_placeholders={"error": str(err)},
-        ) from err
-
-    await coordinator.async_refresh_temp_accesses()
+    coordinator = _loaded_entry(call.hass, call.data[ATTR_CONFIG_ENTRY_ID]).runtime_data
+    await coordinator.async_delete_temporary_access(_slug(call.data[ATTR_LINK]))
 
 
 @callback
