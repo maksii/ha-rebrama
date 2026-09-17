@@ -1,23 +1,17 @@
 name: Tests
 
+# No `schedule` here on purpose: GitHub disables a workflow that has one after
+# 60 days without commits, and that would silently drop these checks from pull
+# requests too. Scheduled runs live in scheduled.yaml, which calls this file.
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Weekly run against the newest Home Assistant release, so an HA change
-    # that breaks the integration shows up before a user reports it. GitHub
-    # pauses scheduled runs after 60 days without commits; any push re-enables
-    # them.
-    - cron: "0 3 * * 1"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   lint:

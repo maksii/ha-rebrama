@@ -1,0 +1,23 @@
+name: Scheduled validation
+
+# Weekly early warning that a Home Assistant or HACS change broke something,
+# without waiting for a user report. This is the only workflow with a
+# schedule: GitHub disables it after 60 days without commits (a repository
+# rule, not a bug), and keeping it separate means the pull-request checks in
+# the other workflows are never affected. Re-enable it from the Actions tab or
+# with `gh workflow enable "Scheduled validation"`.
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hassfest:
+    uses: ./.github/workflows/hassfest.yaml
+  hacs:
+    uses: ./.github/workflows/validate.yaml
+  tests:
+    uses: ./.github/workflows/tests.yaml

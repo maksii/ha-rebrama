@@ -1,21 +1,17 @@
 name: HACS validation
 
+# No `schedule` here on purpose: GitHub disables a workflow that has one after
+# 60 days without commits, and that would silently drop this check from pull
+# requests too. Scheduled runs live in scheduled.yaml, which calls this file.
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Early warning when HACS tightens its rules. GitHub pauses scheduled runs
-    # after 60 days without commits; any push re-enables them.
-    - cron: "0 0 * * *"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   validate-hacs:

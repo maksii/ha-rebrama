@@ -331,8 +331,10 @@ fix:
 3. Publish a release whose tag matches the version:
    `gh release create v1.2.0 --generate-notes --title v1.2.0`.
 
-The scheduled workflows stop running after 60 days without commits (a GitHub
-rule); the next push re-enables them.
+Only the *Scheduled validation* workflow has a schedule; GitHub disables it
+after 60 days without commits (a repository rule). Re-enable it from the Actions
+tab or with `gh workflow enable "Scheduled validation"`. The pull-request
+checks are unaffected.
 
 ## Credits
 
