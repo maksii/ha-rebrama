@@ -511,9 +511,8 @@ class RebramaClient:
         """Normalize 'now' at dispatch, after pacing and authentication delays."""
         body = {**body, "dateStart": max(body["dateStart"], math.ceil(time.time()) + 1)}
         duration = body["dateEnd"] - body["dateStart"]
-        if duration <= 0 or duration < self._settings.get(
-            "minTemporaryAccessTimeInterval", 0
-        ):
+        minimum = self._settings.get("minTemporaryAccessTimeInterval")
+        if duration <= 0 or (isinstance(minimum, int) and duration < minimum):
             raise RebramaApiError(1505, "The remaining access window is too short")
         return body
 

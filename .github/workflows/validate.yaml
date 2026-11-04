@@ -23,8 +23,3 @@ jobs:
         uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
-          # Brand images are shipped locally in custom_components/rebrama/brand/
-          # (Home Assistant 2026.3+ brands proxy). Until the `rebrama` domain is
-          # also accepted into the home-assistant/brands repository, skip the
-          # remote brands check so CI stays green for the custom-repository path.
-          ignore: brands

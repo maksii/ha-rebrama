@@ -132,3 +132,21 @@ The probe scripts below live in the maintainer's private analysis folder and are
 - `rebrama_error_test.py` — 54-case validation/auth/not-found probe → `_analysis/error_cases.json`. Side-effect-free except section D (rotates tokens) and F5/F6 (create temp-accesses not auto-cleaned).
 
 Both use a digits-only phone + password and can be re-run to refresh transcripts.
+
+
+## 2026-11-04 integration audit
+
+The live API still returned one place and nine access points. `canManage:false`
+correctly prevents opening-log calls for this resident account. `/api/users/me`
+returned `validUntil:null`; this is a supported absence of expiry data.
+Settings reported min/max temporary-access durations of 60/604800 and a maximum
+of 10 uses. The integration enforces published limits before sending mutations.
+Past starts are normalized again immediately before dispatch to account for
+request pacing and token-refresh delays.
+
+Production logs showed transient HTTP 520 responses and network/DNS outages.
+HTTP 429/5xx is classified before JSON domain errors, applies account backoff,
+and never starts reauthentication or repeats a write. Retry-After delta-seconds
+and HTTP-dates are supported. All HTTP exchanges are serialized and spaced by
+at least one second. Success envelopes and payload shapes are validated before
+registry synchronization, so invalid JSON cannot erase devices.

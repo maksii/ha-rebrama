@@ -334,7 +334,7 @@ database and out of diagnostics downloads.
 
 Home Assistant 2026.3 and newer require **Python 3.14**. Run the HA test harness
 on Linux (WSL works on Windows); current HA imports POSIX-only modules.
-CI tests the minimum HA 2026.8.0 and HA 2026.10.4, enforces 95% coverage including
+CI tests the minimum HA 2026.8.0, HA 2026.10.4, and the latest test harness; it enforces 95% coverage including
 branches, runs strict mypy, Ruff, hassfest, HACS validation, and CodeQL. Development
 dependencies and action commits are pinned, with weekly Dependabot updates.
 See [release verification](docs/RELEASE-READINESS-2026-11-04.md) for live evidence
