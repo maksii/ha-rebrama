@@ -284,3 +284,30 @@ async def test_management_permission_revoked_and_restored(
         "sensor", DOMAIN, "user-1_place-1_last_opened"
     )
     assert sensor and hass.states.get(sensor).state != "unavailable"
+
+
+async def test_migration_recovers_already_scoped_ids(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A registry saved before entry migration must not be prefixed twice."""
+    mock_config_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    existing = registry.async_get_or_create(
+        "button", DOMAIN, "user-1_ap-1_open", config_entry=mock_config_entry
+    )
+    account = registry.async_get_or_create(
+        "sensor", DOMAIN, "user-1_subscription_expires", config_entry=mock_config_entry
+    )
+    assert await integration.async_migrate_entry(hass, mock_config_entry)
+    assert registry.async_get(existing.entity_id).unique_id == "user-1_ap-1_open"
+    assert (
+        registry.async_get(account.entity_id).unique_id == "user-1_subscription_expires"
+    )
+
+
+async def test_migration_rejects_future_schema(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(mock_config_entry, version=2)
+    assert not await integration.async_migrate_entry(hass, mock_config_entry)

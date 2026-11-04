@@ -54,12 +54,46 @@ private API compatibility.
   isolated tests using HA's real HomeKit Switch adapter passed on command success
   and failure. The owner excluded further Watch work after the fault was traced
   outside Rebrama. Temporary debug logging was restored to warning.
-- No door was opened and no guest link was created by the workstation agent.
+- No door was opened by the workstation agent. During post-deployment validation,
+  one future one-use guest link was created, checked in the sensor and calendar,
+  then immediately revoked before it could become valid.
 
 ## Automated evidence
 
-Baseline: 97 tests passed with 100% statement coverage. Expanded suite and
-post-deployment evidence are recorded below after final verification.
+Baseline: 97 tests passed with 100% statement coverage. Final local suite:
+**142 passing tests on HA 2026.8.0 and 2026.10.4**, with **99.31% combined
+statement/branch coverage**. Ruff check/format and strict mypy pass.
+SonarQube reports gate OK, zero open issues and zero security hotspots after
+individual false-positive review. No blanket rule exclusions were added.
+
+The shared smarthome Sonar runner currently invokes unittest, which cannot run
+this Linux-only pytest harness. The actual scan used the same runner's scanner
+and gate checks with its coverage step adapted to execute pytest under WSL.
+For a standalone scan, first generate coverage with
+`pytest --cov-report=xml:.sonar-reports/coverage.xml`, then run
+`uvx pysonar -Dsonar.qualitygate.wait=true` with SONAR_TOKEN and SONAR_HOST_URL
+provided in the environment. Never put a token in a command argument or file.
+
+## Deployment evidence
+
+- Deployed candidate 1.3.0 to HA 2026.10.4 on 2026-11-04. HA configuration check
+  passed (unrelated xiaomi_miot deprecation warnings remain outside this scope).
+  Source compiled using the HA container's Python before replacement.
+- Protected on-host backup retains original integration files and config-entry,
+  entity and device registries. Backup location is in the private workstation
+  deployment record; no credentials or storage contents are committed here.
+- Entry schema migrated from 1.1 to 1.2. All 22 entity IDs and all device IDs were
+  retained; 18 door entity unique IDs gained account scope. Registry persistence
+  and live WebSocket state were both verified.
+- Nine connectivity sensors remain on; account count is nine, temporary-access
+  count is zero, calendar is off. Subscription remains correctly unknown.
+- Live service smoke: create a one-use link for one door, starting an hour in
+  the future and lasting two minutes; verify sensor count, validity and calendar;
+  revoke; verify count zero and calendar removal. No physical open command was
+  sent. Cloud replies were HTTP 201 for create and HTTP 200 for revoke and reads.
+- Post-deployment log review found no Rebrama warning or error. Share-link paths
+  are redacted, and no HTTP response bodies are logged.
+- Scheduled-poll and final GitHub check evidence are appended below.
 
 ## Static analysis triage
 
