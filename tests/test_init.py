@@ -47,7 +47,7 @@ async def test_setup_and_unload(
     assert mock_config_entry.state is ConfigEntryState.LOADED
 
     ent_reg = er.async_get(hass)
-    button_id = ent_reg.async_get_entity_id("button", DOMAIN, "ap-1_open")
+    button_id = ent_reg.async_get_entity_id("button", DOMAIN, "user-1_ap-1_open")
     assert button_id is not None
     assert hass.states.get(button_id) is not None
 
@@ -90,7 +90,7 @@ async def test_offline_access_point_button_unavailable(
 
     ent_reg = er.async_get(hass)
     # ap-2 (Garage) is offline in the fixture.
-    garage = ent_reg.async_get_entity_id("button", DOMAIN, "ap-2_open")
+    garage = ent_reg.async_get_entity_id("button", DOMAIN, "user-1_ap-2_open")
     assert garage is not None
     assert hass.states.get(garage).state == "unavailable"
 
@@ -127,12 +127,12 @@ async def test_dynamic_and_stale_devices(
     await hass.async_block_till_done()
 
     # New entity added dynamically, new place device present.
-    assert ent_reg.async_get_entity_id("button", DOMAIN, "ap-9_open") is not None
+    assert ent_reg.async_get_entity_id("button", DOMAIN, "user-1_ap-9_open") is not None
     assert _device(hass, mock_config_entry, "place_place-9") is not None
     # Stale place/access-point devices (and their entities) removed.
     assert _device(hass, mock_config_entry, "ap_ap-1") is None
     assert _device(hass, mock_config_entry, "place_place-1") is None
-    assert ent_reg.async_get_entity_id("button", DOMAIN, "ap-1_open") is None
+    assert ent_reg.async_get_entity_id("button", DOMAIN, "user-1_ap-1_open") is None
 
     # Access to the original door is granted again: its entities come back
     # without a reload.
@@ -140,7 +140,7 @@ async def test_dynamic_and_stale_devices(
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    button_id = ent_reg.async_get_entity_id("button", DOMAIN, "ap-1_open")
+    button_id = ent_reg.async_get_entity_id("button", DOMAIN, "user-1_ap-1_open")
     assert button_id is not None
     assert hass.states.get(button_id) is not None
     assert hass.states.get(button_id).state != "unavailable"
@@ -192,6 +192,7 @@ def test_access_point_entity_without_place() -> None:
     """An entity whose whole place vanished reports no access point."""
     coordinator = MagicMock()
     coordinator.data.places = {}
+    coordinator.data.access_points = {}
     entity = RebramaConnectivitySensor(
         coordinator,
         AccessPoint(
@@ -205,3 +206,81 @@ def test_access_point_entity_without_place() -> None:
     )
     assert entity.access_point is None
     assert entity.available is False
+
+
+async def test_migration_preserves_entity_ids_and_customizations(
+    hass: HomeAssistant, patch_client: MagicMock, mock_config_entry: MockConfigEntry
+) -> None:
+    registry = er.async_get(hass)
+    mock_config_entry.add_to_hass(hass)
+    old = registry.async_get_or_create(
+        "button",
+        DOMAIN,
+        "ap-1_open",
+        config_entry=mock_config_entry,
+        suggested_object_id="custom_front_gate",
+    )
+    registry.async_update_entity(old.entity_id, name="My gate", icon="mdi:gate")
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    migrated = registry.async_get(old.entity_id)
+    assert migrated.unique_id == "user-1_ap-1_open"
+    assert migrated.name == "My gate"
+    assert migrated.icon == "mdi:gate"
+    assert mock_config_entry.minor_version == 2
+    assert hass.states.get(old.entity_id) is not None
+    assert await integration.async_migrate_entry(hass, mock_config_entry)
+    assert registry.async_get(old.entity_id).unique_id == migrated.unique_id
+
+
+async def test_two_accounts_can_share_a_door_without_cleanup_destroying_it(
+    hass: HomeAssistant, patch_client: MagicMock, mock_config_entry: MockConfigEntry
+) -> None:
+    from custom_components.rebrama.const import CONF_USER_ID
+
+    await _setup(hass, mock_config_entry)
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user-2",
+        data={**mock_config_entry.data, CONF_USER_ID: "user-2"},
+    )
+    await _setup(hass, other)
+    registry = er.async_get(hass)
+    first = registry.async_get_entity_id("button", DOMAIN, "user-1_ap-1_open")
+    second = registry.async_get_entity_id("button", DOMAIN, "user-2_ap-1_open")
+    assert first and second and first != second
+    shared = _device(hass, other, "ap_ap-1")
+    assert shared.config_entry_id == other.entry_id
+    assert _device(hass, mock_config_entry, "ap_ap-1").id != shared.id
+    patch_client.async_get_places.return_value = []
+    await mock_config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert registry.async_get(first) is None
+    assert registry.async_get(second) is not None
+    assert hass.states.get(second).state != "unavailable"
+    assert _device(hass, other, "ap_ap-1").id == shared.id
+
+
+async def test_management_permission_revoked_and_restored(
+    hass: HomeAssistant, patch_client: MagicMock, mock_config_entry: MockConfigEntry
+) -> None:
+    from dataclasses import replace
+
+    await _setup(hass, mock_config_entry)
+    registry = er.async_get(hass)
+    coordinator = mock_config_entry.runtime_data
+    place = patch_client.async_get_places.return_value[0]
+    patch_client.async_get_places.return_value = [replace(place, can_manage=False)]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert (
+        registry.async_get_entity_id("sensor", DOMAIN, "user-1_place-1_last_opened")
+        is None
+    )
+    patch_client.async_get_places.return_value = [place]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    sensor = registry.async_get_entity_id(
+        "sensor", DOMAIN, "user-1_place-1_last_opened"
+    )
+    assert sensor and hass.states.get(sensor).state != "unavailable"

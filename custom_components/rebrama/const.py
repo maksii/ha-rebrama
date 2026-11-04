@@ -53,13 +53,8 @@ ERROR_PHONE_FORMAT: Final = 1210
 ERROR_TEMP_ACCESS_NOT_FOUND: Final = 1501
 
 # --- Polling ---
-# Online status and (admin-only) opening logs are the only data that changes on
-# their own; places rarely change and can be picked up with a manual reload. A
-# few minutes is plenty for a background integration, so we default well above
-# the official widget's ~60 s cadence and let users tune it.
+# A shared, conservative interval: no endpoint is polled per entity.
 DEFAULT_SCAN_INTERVAL: Final = timedelta(minutes=5)
-MIN_SCAN_INTERVAL: Final = 60
-MAX_SCAN_INTERVAL: Final = 3600
 
 # --- Services ---
 SERVICE_CREATE_TEMPORARY_ACCESS: Final = "create_temporary_access"

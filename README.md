@@ -91,15 +91,14 @@ repository:
 You can add more than one Rebrama account by repeating the steps with a
 different phone number.
 
-### Options
+### Polling controls
 
-Open the integration's **Configure** dialog to set:
-
-| Option | Description |
-|---|---|
-| **Update interval** | How often (in seconds, 60–3600) to refresh access-point status, share links and the latest opening. Leave empty for the default of 5 minutes. |
-
-Changing options reloads the integration automatically.
+The integration refreshes the account every **5 minutes**. Starting with 1.3.0,
+the old per-integration interval option is removed during migration. This follows
+Home Assistant's [appropriate polling guidance](https://contributors.home-assistant.io/core/quality-scale/appropriate-polling/).
+For a custom schedule, disable polling in the entry's **System options** and use
+an automation calling `homeassistant.update_entity` on a Rebrama entity. Polling
+is shared across all entities; do not schedule each door separately.
 
 ### Re-authentication & reconfiguration
 
@@ -140,11 +139,13 @@ work with them:
   `rebrama.delete_temporary_access` for full control (specific access points,
   usage limits, and the returned share URL).
 
-Either way, a start time in the past means *right now* (the Rebrama API refuses
+Either way, a start time in the past means *right now* (with a small future
+margin when the request is sent) (the Rebrama API refuses
 links that start in the past, and calendar dialogs and `now()` templates
 routinely produce a start a few seconds ago). The end time must be in the
 future. Access points that Rebrama does not let you share are refused with a
-clear message before anything is sent.
+clear message before anything is sent. The server's published duration and
+usage limits are checked locally; a request that expires while queued is refused.
 
 Links created or revoked in the **Rebrama mobile app** show up in Home
 Assistant on the next update (5 minutes by default).
@@ -244,18 +245,33 @@ automation:
 
 ## How data is updated
 
-The integration polls the Rebrama cloud on an interval (default **5 minutes**,
-configurable to 60–3600 s in the integration's options). Every poll refreshes
+The integration polls the Rebrama cloud every **5 minutes**. Every poll refreshes
 the list of places and access points (including online status), the
 subscription expiry, the temporary-access links, and the latest opening for
 each place you manage (other places never generate log calls). It is a
 `cloud_polling` integration, so changes may be reflected with a short delay; if
-you need quicker updates, lower the interval.
+you need a different schedule, use the Home Assistant polling controls above.
 
 Pressing an *Open* button and creating or deleting a share link from Home
-Assistant refresh the affected data immediately. If one of the secondary
-requests fails (for example the opening log for one place), the last known
-value is kept and everything else still updates.
+Assistant request a shared refresh. Refresh requests close together are debounced.
+If a secondary endpoint fails, its cached data is retained for recovery but its
+entities become unavailable; unrelated entities continue updating. The first
+failure is logged once, and recovery is logged once. A failed place list makes
+all entities unavailable and cannot delete the last known devices.
+
+For an account without management permission and without share links, each poll
+makes **three requests**: places/access points, profile, and temporary accesses.
+At five minutes this is about **36 requests/hour**, regardless of the number of
+doors. Setup additionally requests settings once. Each managed place adds one
+opening-log request per poll; links lacking validity dates need a detail lookup.
+Requests are serialized and spaced at least one second apart. HTTP 429/5xx pauses
+the account with exponential backoff (60 seconds up to one hour), honoring a
+longer `Retry-After` up to 24 hours. Mutations are never retried on network or
+server failure; only an explicit authentication rejection permits one retry.
+
+An unchanged entity timestamp is expected: equal snapshots skip state writes.
+Diagnostics include the last successful poll, successful poll count, configured
+interval, current update success, and failed secondary endpoints.
 
 ## Troubleshooting
 
@@ -270,9 +286,13 @@ value is kept and everything else still updates.
 - **"Rebrama rejected the request: ..."** when creating a share link: the
   server's own validation failed (for example a usage limit above the allowed
   maximum). The message is passed through unchanged.
-- **Need more detail?** Enable debug logging (every API response is then
-  logged, share links included, so keep the log private) and download
-  diagnostics:
+- **Subscription expiry is unknown:** Rebrama can return `validUntil: null`.
+  This means the API supplies no expiry; the integration does not invent one.
+- **No Last opened sensor:** the account must have management permission for
+  the place. Ordinary residents cannot read the opening log.
+- **Need more detail?** Enable debug logging and download diagnostics. Debug
+  logs contain request metadata and HTTP status, never response bodies, tokens,
+  phone numbers, or share slugs:
 
   ```yaml
   logger:
@@ -312,12 +332,19 @@ database and out of diagnostics downloads.
 
 ## Development
 
-Home Assistant 2026.3 and newer require **Python 3.14**.
+Home Assistant 2026.3 and newer require **Python 3.14**. Run the HA test harness
+on Linux (WSL works on Windows); current HA imports POSIX-only modules.
+CI tests the minimum HA 2026.8.0 and HA 2026.10.4, enforces 95% coverage including
+branches, runs strict mypy, Ruff, hassfest, HACS validation, and CodeQL. Development
+dependencies and action commits are pinned, with weekly Dependabot updates.
+See [release verification](docs/RELEASE-READINESS-2026-11-04.md) for live evidence
+and the distinction between a custom release and acceptance into upstream HA.
 
 ```bash
-python -m pip install -r requirements_test.txt
+python -m pip install -r requirements_dev.txt
 pytest
 ruff check . && ruff format --check .
+mypy
 ```
 
 Brand images under `custom_components/rebrama/brand/` are generated by
@@ -331,7 +358,7 @@ fix:
 1. Bump `version` in `custom_components/rebrama/manifest.json`.
 2. Merge to `main` with the checks green.
 3. Publish a release whose tag matches the version:
-   `gh release create v1.2.0 --generate-notes --title v1.2.0`.
+   `gh release create v1.3.0 --generate-notes --title v1.3.0`.
 
 Only the *Scheduled validation* workflow has a schedule; GitHub disables it
 after 60 days without commits (a repository rule). Re-enable it from the Actions

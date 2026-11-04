@@ -299,3 +299,37 @@ async def test_delete_event_errors(
         await calendar.async_delete_event("abc")
     assert not isinstance(err.value, ServiceValidationError)
     assert err.value.translation_key == "service_failed"
+
+
+async def test_adjacent_events_advance_at_exact_end(
+    hass: HomeAssistant,
+    patch_client: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    freezer,
+) -> None:
+    from datetime import UTC, datetime
+
+    boundary = datetime(2026, 11, 4, 12, tzinfo=UTC)
+    freezer.move_to(boundary)
+    patch_client.async_list_temporary_accesses.return_value = [
+        TempAccess(
+            "old",
+            "https://rebrama.com/access/old",
+            "Old",
+            boundary - timedelta(hours=1),
+            boundary,
+            None,
+        ),
+        TempAccess(
+            "next",
+            "https://rebrama.com/access/next",
+            "Next",
+            boundary,
+            boundary + timedelta(hours=1),
+            None,
+        ),
+    ]
+    coordinator = await _coordinator(hass, mock_config_entry)
+    calendar = RebramaTemporaryAccessCalendar(coordinator)
+    assert calendar.event.summary == "Next"
+    assert calendar.state == "on"

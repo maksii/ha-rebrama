@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterable, Mapping
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+import asyncio
+from collections.abc import Awaitable, Iterable
+from dataclasses import dataclass
+from datetime import datetime
 import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -20,16 +20,27 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import RebramaApiError, RebramaAuthError, RebramaClient, RebramaError
+from .api import (
+    RebramaApiError,
+    RebramaAuthError,
+    RebramaClient,
+    RebramaError,
+    RebramaRateLimitError,
+)
 from .const import (
     CONF_USER_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     ERROR_TEMP_ACCESS_NOT_FOUND,
-    MAX_SCAN_INTERVAL,
-    MIN_SCAN_INTERVAL,
 )
-from .models import AccessPoint, OpenLog, Place, Profile, TempAccess
+from .models import (
+    AccessPoint,
+    OpenLog,
+    Place,
+    Profile,
+    TempAccess,
+    temporary_access_slug,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +55,7 @@ class RebramaData:
     logs: dict[str, OpenLog | None]
     temp_accesses: list[TempAccess]
     profile: Profile
+    failed_endpoints: frozenset[str] = frozenset()
 
     @property
     def access_points(self) -> dict[str, AccessPoint]:
@@ -53,14 +65,6 @@ class RebramaData:
             for place in self.places.values()
             for access_point in place.access_points.values()
         }
-
-
-def _interval(options: Mapping[str, Any]) -> timedelta:
-    """Return the polling interval: the user's (clamped) option, else the default."""
-    if override := options.get(CONF_SCAN_INTERVAL):
-        seconds = max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, int(override)))
-        return timedelta(seconds=seconds)
-    return DEFAULT_SCAN_INTERVAL
 
 
 class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
@@ -80,13 +84,17 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
             _LOGGER,
             name=DOMAIN,
             config_entry=entry,
-            update_interval=_interval(entry.options),
+            update_interval=DEFAULT_SCAN_INTERVAL,
             always_update=False,
         )
         self.client = client
         self.user_id: str = entry.data[CONF_USER_ID]
         # Server-side limits; kept for diagnostics/support only.
         self.settings: dict[str, Any] = {}
+        self._data_lock = asyncio.Lock()
+        self._failed_endpoints: set[str] = set()
+        self.last_successful_update: datetime | None = None
+        self.successful_updates = 0
 
     async def _async_setup(self) -> None:
         """Fetch the server-side settings once."""
@@ -98,6 +106,11 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
             _LOGGER.debug("Could not fetch settings (%s); continuing without", err)
 
     async def _async_update_data(self) -> RebramaData:
+        """Keep snapshots serialized with coordinator-driven updates."""
+        async with self._data_lock:
+            return await self._async_poll()
+
+    async def _async_poll(self) -> RebramaData:
         """Fetch places, the profile, share links and the latest opening logs.
 
         Only the place list is mandatory. Everything else is best-effort and
@@ -119,6 +132,12 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
                 previous.temp_accesses if previous else [],
                 "temporary accesses",
             )
+            active_logs = {
+                f"opening logs for place {p.id}" for p in places if p.can_manage
+            }
+            self._failed_endpoints.intersection_update(
+                {"profile", "temporary accesses"} | active_logs
+            )
             logs: dict[str, OpenLog | None] = {}
             for place in places:
                 # Opening logs need "manage" permission on the place (the API
@@ -133,25 +152,38 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
                 )
         except RebramaAuthError as err:
             raise ConfigEntryAuthFailed("Authentication with Rebrama failed") from err
+        except RebramaRateLimitError as err:
+            raise UpdateFailed(str(err), retry_after=err.retry_after) from err
         except RebramaError as err:
             raise UpdateFailed(f"Error fetching data from Rebrama: {err}") from err
 
+        self.last_successful_update = dt_util.utcnow()
+        self.successful_updates += 1
         return RebramaData(
             places={place.id: place for place in places},
             logs=logs,
             temp_accesses=temp_accesses,
             profile=profile,
+            failed_endpoints=frozenset(self._failed_endpoints),
         )
 
     async def _async_fetch[T](self, request: Awaitable[T], fallback: T, what: str) -> T:
         """Await a secondary fetch, keeping the last value on non-auth failures."""
         try:
-            return await request
-        except RebramaAuthError:
+            result = await request
+        except RebramaAuthError, RebramaRateLimitError:
             raise
-        except RebramaError as err:
-            _LOGGER.debug("Could not fetch %s (%s); keeping last value", what, err)
+        except RebramaError:
+            if what not in self._failed_endpoints:
+                _LOGGER.warning(
+                    "Could not fetch %s; affected entities are unavailable", what
+                )
+            self._failed_endpoints.add(what)
             return fallback
+        if what in self._failed_endpoints:
+            _LOGGER.info("Fetching %s recovered", what)
+            self._failed_endpoints.remove(what)
+        return result
 
     # ------------------------------------------------------------------ #
     # Devices
@@ -212,6 +244,11 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
                 translation_domain=DOMAIN, translation_key="invalid_time_range"
             )
         start = max(start, now)
+        if int(end.timestamp()) <= int(start.timestamp()):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="invalid_time_range"
+            )
+        self._validate_share_limits(start, end, uses)
 
         ids = sorted(set(access_point_ids))
         if not ids:
@@ -241,8 +278,40 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
         except RebramaError as err:
             raise self._action_error(err) from err
 
-        await self._async_refresh_temp_accesses()
-        return str(result.get("tempAccessLink") or result.get("url") or "")
+        url = str(result.get("tempAccessLink") or result.get("url") or "")
+        # A mutation is sent once. A failed refresh must never invite a retry of
+        # the mutation, which could grant access twice.
+        await self.async_request_refresh()
+        if not temporary_access_slug(url):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="missing_created_link"
+            )
+        return url
+
+    def _validate_share_limits(
+        self, start: datetime, end: datetime, uses: int | None
+    ) -> None:
+        """Validate the server's published duration and usage limits."""
+        if uses is not None and (
+            isinstance(uses, bool) or not isinstance(uses, int) or uses < 1
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="invalid_uses"
+            )
+        maximum_uses = self.settings.get("maxTemporaryAccessUsesNumber")
+        if uses is not None and isinstance(maximum_uses, int) and uses > maximum_uses:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="invalid_uses"
+            )
+        duration = int(end.timestamp()) - int(start.timestamp())
+        minimum = self.settings.get("minTemporaryAccessTimeInterval")
+        maximum = self.settings.get("maxTemporaryAccessTimeInterval")
+        if (isinstance(minimum, int) and duration < minimum) or (
+            isinstance(maximum, int) and duration > maximum
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="invalid_duration"
+            )
 
     async def async_delete_temporary_access(self, slug: str) -> None:
         """Revoke a share link. A link that is already gone counts as revoked."""
@@ -254,16 +323,7 @@ class RebramaCoordinator(DataUpdateCoordinator[RebramaData]):
             _LOGGER.debug("Temporary access %s no longer exists", slug)
         except RebramaError as err:
             raise self._action_error(err) from err
-        await self._async_refresh_temp_accesses()
-
-    async def _async_refresh_temp_accesses(self) -> None:
-        """Re-fetch share links right after an HA-initiated create/delete."""
-        try:
-            temp_accesses = await self.client.async_list_temporary_accesses()
-        except RebramaError as err:
-            _LOGGER.debug("Could not refresh temporary accesses: %s", err)
-            return
-        self.async_set_updated_data(replace(self.data, temp_accesses=temp_accesses))
+        await self.async_request_refresh()
 
     @callback
     def _auth_error(self) -> HomeAssistantError:

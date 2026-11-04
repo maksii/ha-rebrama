@@ -16,23 +16,35 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install development dependencies
+        run: pip install -r requirements_dev.txt
       - name: Lint
         run: |
           ruff check .
           ruff format --check .
+      - name: Strict typing
+        run: mypy
 
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha: "2026.8.0"
+            harness: "0.13.354"
+          - ha: "2026.10.4"
+            harness: "0.13.375"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           # Home Assistant 2026.3+ (and therefore the current test harness)
           # requires Python 3.14; an older interpreter silently resolves to an
@@ -41,6 +53,6 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements_test.txt
+          pip install "homeassistant==${{ matrix.ha }}" "pytest-homeassistant-custom-component==${{ matrix.harness }}" pytest-cov==7.1.0
       - name: Run tests
         run: pytest

@@ -5,9 +5,13 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD
+from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD, CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry, DeviceEntryType
 from homeassistant.helpers.typing import ConfigType
@@ -17,9 +21,11 @@ from .const import (
     CONF_FINGERPRINT,
     CONF_PHONE,
     CONF_REFRESH_TOKEN,
+    CONF_USER_ID,
     CONFIGURATION_URL,
     DOMAIN,
     MANUFACTURER,
+    MODEL_ACCESS_POINT,
     MODEL_ACCOUNT,
     MODEL_PLACE,
     PLATFORMS,
@@ -78,6 +84,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: RebramaConfigEntry) -> b
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: RebramaConfigEntry) -> bool:
+    """Preserve entity IDs and history while scoping unique IDs to each account."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
+        registry = er.async_get(hass)
+        for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+            if entity.unique_id.startswith(f"{entry.data[CONF_USER_ID]}_"):
+                continue
+            if entity.domain in (
+                "button",
+                "binary_sensor",
+            ) or entity.unique_id.endswith("_last_opened"):
+                registry.async_update_entity(
+                    entity.entity_id,
+                    new_unique_id=f"{entry.data[CONF_USER_ID]}_{entity.unique_id}",
+                )
+        hass.config_entries.async_update_entry(
+            entry,
+            minor_version=2,
+            options={
+                key: value
+                for key, value in entry.options.items()
+                if key != CONF_SCAN_INTERVAL
+            },
+        )
     return True
 
 
@@ -144,8 +179,38 @@ def _sync_devices(hass: HomeAssistant, entry: RebramaConfigEntry) -> None:
             configuration_url=CONFIGURATION_URL,
         )
 
+        # Refresh names and parent links even when a device already exists.
+        parent = coordinator.device_id(place_device_id(place.id))
+        for access_point in place.access_points.values():
+            dev_reg.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, access_point_device_id(access_point.id))},
+                name=access_point.name,
+                manufacturer=MANUFACTURER,
+                model=MODEL_ACCESS_POINT,
+                via_device_id=parent,
+                configuration_url=CONFIGURATION_URL,
+            )
+
     valid = _valid_identifiers(coordinator)
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
         if not _is_current(valid, device):
             _LOGGER.debug("Removing stale Rebrama device %s", device.name)
             dev_reg.async_remove_device(device.id)
+
+    registry = er.async_get(hass)
+    managed_logs = {
+        f"{coordinator.user_id}_{place.id}_last_opened"
+        for place in coordinator.data.places.values()
+        if place.can_manage
+    }
+    devices = {
+        device.id
+        for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+    }
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (entity.device_id is not None and entity.device_id not in devices) or (
+            entity.unique_id.endswith("_last_opened")
+            and entity.unique_id not in managed_logs
+        ):
+            registry.async_remove(entity.entity_id)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from custom_components.rebrama.models import (
     OpenLog,
     Profile,
@@ -57,3 +59,32 @@ def test_temp_access_is_active() -> None:
         {"url": "https://rebrama.com/access/b", "dateEnd": int(now.timestamp()) - 1}
     )
     assert not expired.is_active(now)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "https://[invalid",
+        "../user",
+        "a/b",
+        "a?x=1",
+        "a#fragment",
+        "https://other.example/access/key",
+        "https://rebrama.com/api/auth/login",
+        "https://rebrama.com/access/../user",
+    ],
+)
+def test_untrusted_share_links_cannot_select_an_api_path(value: str) -> None:
+    from custom_components.rebrama.models import temporary_access_slug
+
+    assert temporary_access_slug(value) == ""
+
+
+def test_share_url_query_is_not_part_of_the_slug() -> None:
+    from custom_components.rebrama.models import temporary_access_slug
+
+    assert (
+        temporary_access_slug("https://rebrama.com/access/key?source=app#details")
+        == "key"
+    )

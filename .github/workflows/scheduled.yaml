@@ -21,3 +21,8 @@ jobs:
     uses: ./.github/workflows/validate.yaml
   tests:
     uses: ./.github/workflows/tests.yaml
+  codeql:
+    uses: ./.github/workflows/codeql.yaml
+    permissions:
+      contents: read
+      security-events: write

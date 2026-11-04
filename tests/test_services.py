@@ -65,7 +65,7 @@ async def test_create_temporary_access(
 ) -> None:
     """create_temporary_access resolves the AP and returns the share link."""
     freezer.move_to(NOW)
-    entity_id = await _setup(hass, mock_config_entry, "ap-1_open")
+    entity_id = await _setup(hass, mock_config_entry, "user-1_ap-1_open")
 
     response = await _create(
         hass,
@@ -95,7 +95,7 @@ async def test_create_temporary_access_bad_time_range(
 ) -> None:
     """An end before start is rejected."""
     freezer.move_to(NOW)
-    entity_id = await _setup(hass, mock_config_entry, "ap-1_open")
+    entity_id = await _setup(hass, mock_config_entry, "user-1_ap-1_open")
 
     with pytest.raises(ServiceValidationError):
         await _create(
@@ -118,7 +118,7 @@ async def test_create_temporary_access_not_shareable(
     """An access point that cannot be shared is refused before calling the API."""
     freezer.move_to(NOW)
     # ap-2 (Garage) has can_share_access=False in the fixture.
-    entity_id = await _setup(hass, mock_config_entry, "ap-2_open")
+    entity_id = await _setup(hass, mock_config_entry, "user-1_ap-2_open")
 
     with pytest.raises(ServiceValidationError) as err:
         await _create(
@@ -140,7 +140,7 @@ async def test_delete_temporary_access(
     mock_config_entry: MockConfigEntry,
 ) -> None:
     """delete_temporary_access extracts the slug and calls the client."""
-    await _setup(hass, mock_config_entry, "ap-1_open")
+    await _setup(hass, mock_config_entry, "user-1_ap-1_open")
     await hass.services.async_call(
         DOMAIN,
         SERVICE_DELETE_TEMPORARY_ACCESS,
@@ -159,7 +159,7 @@ async def test_create_invalid_access_point(
     mock_config_entry: MockConfigEntry,
 ) -> None:
     """A non-Rebrama entity is rejected."""
-    await _setup(hass, mock_config_entry, "ap-1_open")
+    await _setup(hass, mock_config_entry, "user-1_ap-1_open")
     with pytest.raises(ServiceValidationError):
         await _create(
             hass,
@@ -179,7 +179,7 @@ async def test_create_errors(
 ) -> None:
     """Server rejections are validation errors; other failures are not."""
     freezer.move_to(NOW)
-    entity_id = await _setup(hass, mock_config_entry, "ap-1_open")
+    entity_id = await _setup(hass, mock_config_entry, "user-1_ap-1_open")
     data = {
         ATTR_ACCESS_POINTS: [entity_id],
         ATTR_START: START.isoformat(),
@@ -216,7 +216,7 @@ async def test_delete_entry_not_found(
     mock_config_entry: MockConfigEntry,
 ) -> None:
     """Deleting against an unknown config entry is rejected."""
-    await _setup(hass, mock_config_entry, "ap-1_open")
+    await _setup(hass, mock_config_entry, "user-1_ap-1_open")
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
             DOMAIN,
@@ -232,7 +232,7 @@ async def test_delete_entry_not_loaded(
     mock_config_entry: MockConfigEntry,
 ) -> None:
     """An unloaded (but existing) account is reported as such."""
-    await _setup(hass, mock_config_entry, "ap-1_open")
+    await _setup(hass, mock_config_entry, "user-1_ap-1_open")
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     with pytest.raises(ServiceValidationError) as err:
         await hass.services.async_call(
@@ -252,7 +252,7 @@ async def test_create_across_accounts_is_rejected(
 ) -> None:
     """Access points from two Rebrama accounts cannot share one link."""
     freezer.move_to(NOW)
-    first = await _setup(hass, mock_config_entry, "ap-1_open")
+    first = await _setup(hass, mock_config_entry, "user-1_ap-1_open")
 
     other_ap = AccessPoint(
         id="ap-7",
@@ -282,7 +282,7 @@ async def test_create_across_accounts_is_rejected(
             CONF_USER_ID: "user-2",
         },
     )
-    second = await _setup(hass, other_entry, "ap-7_open")
+    second = await _setup(hass, other_entry, "user-2_ap-7_open")
 
     with pytest.raises(ServiceValidationError) as err:
         await _create(
@@ -302,3 +302,17 @@ async def test_services_registered_once(hass: HomeAssistant) -> None:
     async_setup_services(hass)
     assert hass.services.has_service(DOMAIN, SERVICE_CREATE_TEMPORARY_ACCESS)
     assert hass.services.has_service(DOMAIN, SERVICE_DELETE_TEMPORARY_ACCESS)
+
+
+async def test_delete_rejects_invalid_link_before_api(
+    hass: HomeAssistant, patch_client: MagicMock, mock_config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, mock_config_entry, "user-1_ap-1_open")
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "delete_temporary_access",
+            {"config_entry_id": mock_config_entry.entry_id, "link": "../user"},
+            blocking=True,
+        )
+    patch_client.async_delete_temporary_access.assert_not_called()

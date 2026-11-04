@@ -6,27 +6,25 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from homeassistant.config_entries import (
-    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD, CONF_SCAN_INTERVAL
-from homeassistant.core import callback
+from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
-    NumberSelector,
-    NumberSelectorConfig,
-    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
-import voluptuous as vol
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    import voluptuous as vol
 
 from .api import (
     RebramaApiError,
@@ -45,8 +43,6 @@ from .const import (
     ERROR_PHONE_INVALID,
     ERROR_PHONE_MIN_LENGTH,
     ERROR_WRONG_CREDENTIALS,
-    MAX_SCAN_INTERVAL,
-    MIN_SCAN_INTERVAL,
     PHONE_MIN_DIGITS,
 )
 from .models import AuthTokens
@@ -84,6 +80,7 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the Rebrama config flow."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the flow."""
@@ -112,7 +109,7 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return None, "account_not_found"
             if err.code == ERROR_WRONG_CREDENTIALS:
                 return None, "invalid_auth"
-            _LOGGER.error("Unexpected Rebrama API error %s: %s", err.code, err.message)
+            _LOGGER.error("Unexpected Rebrama API error code %s", err.code)
             return None, "unknown"
         except RebramaAuthError:
             return None, "invalid_auth"
@@ -253,45 +250,4 @@ class RebramaConfigFlow(ConfigFlow, domain=DOMAIN):
                 STEP_USER_SCHEMA, suggested
             ),
             errors=errors,
-        )
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> RebramaOptionsFlow:
-        """Create the options flow."""
-        return RebramaOptionsFlow()
-
-
-class RebramaOptionsFlow(OptionsFlowWithReload):
-    """Handle Rebrama options (polling interval)."""
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Manage the options."""
-        if user_input is not None:
-            data: dict[str, Any] = {}
-            interval = user_input.get(CONF_SCAN_INTERVAL)
-            if interval:
-                data[CONF_SCAN_INTERVAL] = int(interval)
-            return self.async_create_entry(data=data)
-
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_SCAN_INTERVAL): NumberSelector(
-                    NumberSelectorConfig(
-                        min=MIN_SCAN_INTERVAL,
-                        max=MAX_SCAN_INTERVAL,
-                        step=5,
-                        unit_of_measurement="s",
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
-            }
-        )
-        return self.async_show_form(
-            step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                schema, self.config_entry.options
-            ),
         )

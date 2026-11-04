@@ -138,3 +138,9 @@ def mock_setup_entry() -> Generator[AsyncMock]:
         "custom_components.rebrama.async_setup_entry", return_value=True
     ) as mock:
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def no_real_request_spacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests use fake HTTP; request pacing is tested with a fake clock."""
+    monkeypatch.setattr("custom_components.rebrama.api._REQUEST_INTERVAL", 0)

@@ -50,19 +50,6 @@
       "wrong_account": "The credentials are for a different Rebrama account than the one configured."
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Rebrama options",
-        "data": {
-          "scan_interval": "Update interval"
-        },
-        "data_description": {
-          "scan_interval": "How often (in seconds, 60–3600) to refresh access-point status, share links and the latest opening. Leave empty for the default of 5 minutes."
-        }
-      }
-    }
-  },
   "entity": {
     "button": {
       "open": {
@@ -136,6 +123,18 @@
     },
     "service_failed": {
       "message": "The Rebrama request failed: {error}"
+    },
+    "invalid_temporary_access_link": {
+      "message": "Enter a valid Rebrama share URL or link slug."
+    },
+    "invalid_uses": {
+      "message": "The number of uses is outside the limits allowed by Rebrama."
+    },
+    "invalid_duration": {
+      "message": "The access duration is outside the limits allowed by Rebrama."
+    },
+    "missing_created_link": {
+      "message": "Rebrama accepted the request but returned no valid share link. Check the calendar or Rebrama app before creating another link."
     }
   },
   "services": {

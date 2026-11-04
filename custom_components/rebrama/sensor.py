@@ -66,6 +66,14 @@ class RebramaSubscriptionSensor(RebramaAccountEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.user_id}_subscription_expires"
 
     @property
+    def available(self) -> bool:
+        """Avoid presenting a failed endpoint's cached value as current."""
+        return (
+            super().available
+            and "profile" not in self.coordinator.data.failed_endpoints
+        )
+
+    @property
     def native_value(self) -> datetime | None:
         """Return the subscription expiry, if known."""
         return self.coordinator.data.profile.valid_until
@@ -120,6 +128,14 @@ class RebramaTemporaryAccessSensor(RebramaAccountEntity, SensorEntity):
         """Return links that have not yet expired (derived locally from dateEnd)."""
         now = dt_util.utcnow()
         return [a for a in self.coordinator.data.temp_accesses if a.is_active(now)]
+
+    @property
+    def available(self) -> bool:
+        """Avoid presenting a failed endpoint's cached value as current."""
+        return (
+            super().available
+            and "temporary accesses" not in self.coordinator.data.failed_endpoints
+        )
 
     @property
     def native_value(self) -> int:
@@ -192,7 +208,18 @@ class RebramaLastOpenedSensor(RebramaPlaceEntity, SensorEntity):
     def __init__(self, coordinator: RebramaCoordinator, place: Place) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, place)
-        self._attr_unique_id = f"{place.id}_last_opened"
+        self._attr_unique_id = f"{coordinator.user_id}_{place.id}_last_opened"
+
+    @property
+    def available(self) -> bool:
+        """Opening logs require current management permission and a fresh fetch."""
+        return (
+            super().available
+            and self.place is not None
+            and self.place.can_manage
+            and f"opening logs for place {self._place_id}"
+            not in self.coordinator.data.failed_endpoints
+        )
 
     @property
     def _log(self) -> OpenLog | None:

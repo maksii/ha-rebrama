@@ -162,28 +162,6 @@ async def test_reconfigure_success(
     assert mock_config_entry.title == "380991111111"
 
 
-async def test_options_flow_scan_interval(
-    hass: HomeAssistant,
-    patch_client: MagicMock,
-    mock_config_entry: MockConfigEntry,
-) -> None:
-    """The options flow stores a custom scan interval."""
-    from homeassistant.const import CONF_SCAN_INTERVAL
-
-    mock_config_entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SCAN_INTERVAL: 120}
-    )
-    await hass.async_block_till_done()
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert mock_config_entry.options[CONF_SCAN_INTERVAL] == 120
-
-
 async def test_user_flow_login_cannot_connect(
     hass: HomeAssistant, flow_client: MagicMock
 ) -> None:
