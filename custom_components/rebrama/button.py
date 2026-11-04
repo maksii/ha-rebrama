@@ -35,7 +35,7 @@ class RebramaOpenButton(RebramaAccessPointEntity, ButtonEntity):
     ) -> None:
         """Initialize the button."""
         super().__init__(coordinator, access_point)
-        self._attr_unique_id = f"{access_point.id}_open"
+        self._attr_unique_id = f"{coordinator.user_id}_{access_point.id}_open"
 
     @property
     def available(self) -> bool:

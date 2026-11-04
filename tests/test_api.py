@@ -18,6 +18,7 @@ from custom_components.rebrama.api import (
     RebramaAuthError,
     RebramaClient,
     RebramaConnectionError,
+    RebramaRateLimitError,
 )
 
 Router = Callable[[str, str, Any, dict[str, str]], tuple[int, Any]]
@@ -27,6 +28,7 @@ class _FakeResponse:
     def __init__(self, status: int, payload: Any) -> None:
         self.status = status
         self._payload = payload
+        self.headers: dict[str, str] = {}
 
     async def json(self, content_type: Any = None) -> Any:
         await asyncio.sleep(0)  # let concurrent requests interleave like real I/O
@@ -264,7 +266,7 @@ async def test_settings_logs_and_temp_access() -> None:
             assert body["accessPointIds"] == ["a1"]
             return 200, {"data": {"tempAccessLink": "https://rebrama.com/access/xyz"}}
         if "/api/temp-accesses/" in url and method == "DELETE":
-            return 200, {"data": None}
+            return 200, {"data": []}
         return 404, None
 
     client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
@@ -277,7 +279,9 @@ async def test_settings_logs_and_temp_access() -> None:
     assert log.access_point_name == "Gate"
     assert log.user_info == "Me"
 
-    created = await client.async_create_temporary_access(["a1"], 1000, 2000, "d", 1)
+    created = await client.async_create_temporary_access(
+        ["a1"], int(time.time()), int(time.time()) + 3600, "d", 1
+    )
     assert created["tempAccessLink"].endswith("xyz")
 
     await client.async_delete_temporary_access("xyz")
@@ -338,12 +342,12 @@ async def test_list_temporary_accesses_fills_dates_from_details() -> None:
             return 200, {
                 "data": [
                     {
-                        "url": "https://x/access/full",
+                        "url": "https://rebrama.com/access/full",
                         "dateStart": 1000,
                         "dateEnd": 2000,
                     },
-                    {"url": "https://x/access/bare"},
-                    {"url": "https://x/access/gone"},
+                    {"url": "https://rebrama.com/access/bare"},
+                    {"url": "https://rebrama.com/access/gone"},
                 ]
             }
         if url.endswith("/bare/info"):
@@ -355,8 +359,9 @@ async def test_list_temporary_accesses_fills_dates_from_details() -> None:
     accesses = await client.async_list_temporary_accesses()
 
     ends = [a.date_end and int(a.date_end.timestamp()) for a in accesses]
-    assert ends == [2000, 4000, None]
-    assert accesses[1].url == "https://x/access/bare"
+    assert ends[:2] == [2000, 4000]
+    assert accesses[2].date_end is not None
+    assert accesses[1].url == "https://rebrama.com/access/bare"
     # Only the two undated links cost a detail call.
     assert sum("/info" in r["url"] for r in session.requests) == 2
 
@@ -365,7 +370,7 @@ async def test_list_temporary_accesses_empty() -> None:
     """A null/empty data payload yields an empty list."""
 
     def router(method, url, body, headers):
-        return 200, {"data": None}
+        return 200, {"data": []}
 
     client = RebramaClient(FakeSession(router), fingerprint="fp", access="acc")
     assert await client.async_list_temporary_accesses() == []
@@ -480,7 +485,7 @@ async def test_auth_responses_without_tokens() -> None:
         if url.endswith("/api/places/user/devices"):
             return 400, {"error": {"code": 1100, "message": "Unauthorized"}}
         if url.endswith("/api/auth/refresh"):
-            return 200, {"data": {}}
+            return 400, {"error": {"code": 1100}}
         if url.endswith("/api/auth/login"):
             return 200, {"data": {"access": "only"}}
         raise AssertionError(f"unexpected call {url}")
@@ -493,7 +498,7 @@ async def test_auth_responses_without_tokens() -> None:
         phone="380990000000",
         password="pw",
     )
-    with pytest.raises(RebramaAuthError):
+    with pytest.raises(RebramaConnectionError):
         await client.async_get_places()
     assert calls == ["devices", "refresh", "login"]
 
@@ -537,7 +542,7 @@ def test_token_expiry_ignores_non_numeric_exp() -> None:
     assert RebramaClient._is_token_expired(f"h.{payload}.s") is False
 
 
-async def test_debug_log_shows_responses_but_never_tokens(
+async def test_debug_log_has_metadata_but_no_payloads(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Debug logging captures API payloads for support, minus the auth calls."""
@@ -554,4 +559,194 @@ async def test_debug_log_shows_responses_but_never_tokens(
     await client.async_login()
     await client.async_get_profile()
     assert "SECRET" not in caplog.text
-    assert "validUntil" in caplog.text
+    assert "validUntil" not in caplog.text
+    assert "HTTP 200" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        [],
+        {},
+        {"data": None},
+        {"data": {}},
+        {"data": [None]},
+        {"data": [{"id": None}]},
+    ],
+)
+async def test_invalid_places_never_become_an_empty_account(payload: Any) -> None:
+    """Malformed successes must not trigger destructive registry cleanup."""
+    client = RebramaClient(
+        FakeSession(lambda *args: (200, payload)), fingerprint="fp", access="acc"
+    )
+    with pytest.raises(RebramaConnectionError):
+        await client.async_get_places()
+
+
+@pytest.mark.parametrize("status", [429, 503, 520])
+async def test_cloud_backoff_blocks_followup_calls(status: int) -> None:
+    """Even auth-shaped proxy failures are transient and stop further requests."""
+    session = FakeSession(lambda *args: (status, {"error": {"code": 1100}}))
+    client = RebramaClient(session, fingerprint="fp", access="acc", refresh="ref")
+    with pytest.raises(RebramaRateLimitError) as err:
+        await client.async_get_settings()
+    assert err.value.retry_after == 60
+    with pytest.raises(RebramaRateLimitError):
+        await client.async_open("door")
+    assert len(session.requests) == 1
+    client._retry_at = 0
+    with pytest.raises(RebramaRateLimitError) as err:
+        await client.async_get_settings()
+    assert err.value.retry_after == 120
+
+
+async def test_request_spacing_and_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pacing applies to sequential calls; Retry-After extends account cooldown."""
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setattr("custom_components.rebrama.api._REQUEST_INTERVAL", 1)
+    client = RebramaClient(
+        FakeSession(lambda *args: (200, {"data": {}})), fingerprint="fp", access="acc"
+    )
+    with (
+        patch("custom_components.rebrama.api.time.monotonic", return_value=100),
+        patch(
+            "custom_components.rebrama.api.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await client.async_get_settings()
+        await client.async_get_settings()
+        assert sleep.call_args_list[-2].args == (1,)
+    response = _FakeResponse(429, None)
+    response.headers["Retry-After"] = "600"
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+    session.request.return_value = _FakeContext(response)
+    client = RebramaClient(session, fingerprint="fp", access="acc")
+    with pytest.raises(RebramaRateLimitError) as err:
+        await client.async_get_settings()
+    assert err.value.retry_after == 600
+
+
+async def test_malformed_tokens_do_not_start_reauthentication() -> None:
+    """A malformed auth response remains a transient cloud failure."""
+    client = RebramaClient(
+        FakeSession(lambda *args: (201, {"data": {"access": None, "refresh": "r"}})),
+        fingerprint="fp",
+        phone="380",
+        password="pw",
+    )
+    with pytest.raises(RebramaConnectionError):
+        await client.async_login()
+
+
+async def test_share_slug_and_payload_never_appear_in_debug_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.rebrama.api")
+    client = RebramaClient(
+        FakeSession(
+            lambda *args: (
+                200,
+                {"data": {"url": "SECRET-URL", "phone": "SECRET-PHONE"}},
+            )
+        ),
+        fingerprint="fp",
+        access="acc",
+    )
+    await client.async_delete_temporary_access("SECRET-SLUG")
+    assert "SECRET" not in caplog.text
+    assert "HTTP 200" in caplog.text
+
+
+async def test_error_envelope_on_success_is_not_accepted() -> None:
+    client = RebramaClient(
+        FakeSession(
+            lambda *args: (
+                200,
+                {"data": [], "error": {"code": 1502, "message": "rejected"}},
+            )
+        ),
+        fingerprint="fp",
+        access="acc",
+    )
+    with pytest.raises(RebramaApiError):
+        await client.async_get_places()
+
+
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("profile", {"id": None}),
+        ("settings", []),
+        ("logs", {"items": [None]}),
+        ("temporary", [{"url": "https://other.example/access/key"}]),
+    ],
+)
+async def test_invalid_secondary_payloads_are_retryable(
+    path: str, payload: Any
+) -> None:
+    client = RebramaClient(
+        FakeSession(lambda *args: (200, {"data": payload})),
+        fingerprint="fp",
+        access="acc",
+    )
+    call = {
+        "profile": client.async_get_profile,
+        "settings": client.async_get_settings,
+        "logs": lambda: client.async_get_latest_open_log("p"),
+        "temporary": client.async_list_temporary_accesses,
+    }[path]
+    with pytest.raises(RebramaConnectionError):
+        await call()
+
+
+@pytest.mark.parametrize(
+    "retry_after", ["Wed, 04 Nov 2026 12:10:00 GMT", "nan", "invalid"]
+)
+async def test_retry_after_http_date_and_invalid_values(
+    retry_after: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(
+        "custom_components.rebrama.api.time.time",
+        lambda: datetime(2026, 11, 4, 12, tzinfo=UTC).timestamp(),
+    )
+    response = _FakeResponse(429, None)
+    response.headers["Retry-After"] = retry_after
+    session = MagicMock()
+    session.request.return_value = _FakeContext(response)
+    client = RebramaClient(session, fingerprint="fp", access="acc")
+    with pytest.raises(RebramaRateLimitError) as err:
+        await client.async_get_settings()
+    assert err.value.retry_after == (600 if retry_after.startswith("Wed") else 60)
+
+
+async def test_create_now_is_normalized_at_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("custom_components.rebrama.api.time.time", lambda: 100.5)
+    session = FakeSession(
+        lambda *args: (
+            201,
+            {"data": {"tempAccessLink": "https://rebrama.com/access/key"}},
+        )
+    )
+    client = RebramaClient(session, fingerprint="fp", access="acc")
+    await client.async_create_temporary_access(["a1"], 90, 200, "Guest")
+    assert session.requests[0]["json"]["dateStart"] == 102
+    with pytest.raises(RebramaApiError):
+        await client.async_create_temporary_access(["a1"], 90, 101, "Expired in queue")
+    assert len(session.requests) == 1
+
+
+async def test_invalid_slug_does_not_send_delete() -> None:
+    client = RebramaClient(
+        FakeSession(lambda *args: (200, {"data": None})), fingerprint="fp", access="acc"
+    )
+    with pytest.raises(RebramaApiError):
+        await client.async_delete_temporary_access("../user")

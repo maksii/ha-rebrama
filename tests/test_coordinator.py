@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD, CONF_SCAN_INTERVAL
+from homeassistant.const import CONF_ACCESS_TOKEN, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -26,7 +26,6 @@ from custom_components.rebrama.const import (
     CONF_USER_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    MIN_SCAN_INTERVAL,
 )
 from custom_components.rebrama.models import (
     AccessPoint,
@@ -77,24 +76,6 @@ async def test_interval_defaults_without_override(
     entry = _entry()
     await _setup(hass, entry)
     assert entry.runtime_data.update_interval == DEFAULT_SCAN_INTERVAL
-
-
-async def test_interval_option_overrides(
-    hass: HomeAssistant, patch_client: MagicMock
-) -> None:
-    """A user-set scan interval is used."""
-    entry = _entry(options={CONF_SCAN_INTERVAL: 120})
-    await _setup(hass, entry)
-    assert entry.runtime_data.update_interval == timedelta(seconds=120)
-
-
-async def test_interval_option_clamped(
-    hass: HomeAssistant, patch_client: MagicMock
-) -> None:
-    """An out-of-range override is clamped to the supported minimum."""
-    entry = _entry(options={CONF_SCAN_INTERVAL: 5})
-    await _setup(hass, entry)
-    assert entry.runtime_data.update_interval == timedelta(seconds=MIN_SCAN_INTERVAL)
 
 
 async def test_settings_failure_does_not_break_setup(
@@ -259,7 +240,10 @@ async def test_non_manage_place_skips_logs(
     patch_client.async_get_latest_open_log.assert_not_called()
     assert entry.runtime_data.data.logs["place-x"] is None
     ent_reg = er.async_get(hass)
-    assert ent_reg.async_get_entity_id("sensor", DOMAIN, "place-x_last_opened") is None
+    assert (
+        ent_reg.async_get_entity_id("sensor", DOMAIN, "user-1_place-x_last_opened")
+        is None
+    )
 
 
 async def test_create_temporary_access_guards(
@@ -294,3 +278,116 @@ async def test_create_temporary_access_survives_list_refresh_failure(
     )
     assert url == "https://rebrama.com/access/abc123"
     assert coordinator.data.temp_accesses == []
+
+
+async def test_secondary_failure_availability_and_recovery(
+    hass: HomeAssistant, patch_client: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    entry = _entry()
+    await _setup(hass, entry)
+    coordinator = entry.runtime_data
+    patch_client.async_get_profile.side_effect = RebramaConnectionError("down")
+    patch_client.async_list_temporary_accesses.side_effect = RebramaConnectionError(
+        "down"
+    )
+    patch_client.async_get_latest_open_log.side_effect = RebramaConnectionError("down")
+    for _ in range(2):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    for platform, unique in [
+        ("sensor", "user-1_subscription_expires"),
+        ("sensor", "user-1_temporary_accesses"),
+        ("sensor", "user-1_place-1_last_opened"),
+        ("calendar", "user-1_temporary_access"),
+    ]:
+        assert (
+            hass.states.get(
+                registry.async_get_entity_id(platform, DOMAIN, unique)
+            ).state
+            == "unavailable"
+        )
+    assert len(coordinator.data.failed_endpoints) == 3
+    assert caplog.text.count("Could not fetch profile;") == 1
+    assert coordinator.last_update_success
+    patch_client.async_get_profile.side_effect = None
+    patch_client.async_list_temporary_accesses.side_effect = None
+    patch_client.async_get_latest_open_log.side_effect = None
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert coordinator.data.failed_endpoints == frozenset()
+    assert (
+        hass.states.get(
+            registry.async_get_entity_id("sensor", DOMAIN, "user-1_temporary_accesses")
+        ).state
+        == "0"
+    )
+
+
+@pytest.mark.parametrize(
+    "duration,uses,key",
+    [
+        (30, None, "invalid_duration"),
+        (700000, None, "invalid_duration"),
+        (3600, 11, "invalid_uses"),
+        (3600, 0, "invalid_uses"),
+        (0.1, None, "invalid_time_range"),
+    ],
+)
+async def test_server_limits_validated_before_creating_links(
+    hass: HomeAssistant,
+    patch_client: MagicMock,
+    duration: float,
+    uses: int | None,
+    key: str,
+    freezer,
+) -> None:
+    freezer.move_to(datetime(2026, 11, 4, tzinfo=UTC))
+    patch_client.async_get_settings.return_value = {
+        "minTemporaryAccessTimeInterval": 60,
+        "maxTemporaryAccessTimeInterval": 604800,
+        "maxTemporaryAccessUsesNumber": 10,
+    }
+    entry = _entry()
+    await _setup(hass, entry)
+    now = dt_util.utcnow()
+    with pytest.raises(ServiceValidationError) as err:
+        await entry.runtime_data.async_create_temporary_access(
+            ["ap-1"],
+            start=now,
+            end=now + timedelta(seconds=duration),
+            description="Test",
+            uses=uses,
+        )
+    assert err.value.translation_key == key
+    patch_client.async_create_temporary_access.assert_not_called()
+
+
+async def test_backoff_reaches_the_coordinator(
+    hass: HomeAssistant, patch_client: MagicMock
+) -> None:
+    from custom_components.rebrama.api import RebramaRateLimitError
+
+    entry = _entry()
+    await _setup(hass, entry)
+    patch_client.async_get_profile.side_effect = RebramaRateLimitError(600)
+    await entry.runtime_data.async_refresh()
+    assert not entry.runtime_data.last_update_success
+    assert entry.runtime_data.last_exception.retry_after == 600
+
+
+async def test_create_missing_link_does_not_repeat_mutation(
+    hass: HomeAssistant, patch_client: MagicMock
+) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    entry = _entry()
+    await _setup(hass, entry)
+    patch_client.async_create_temporary_access.return_value = {}
+    now = dt_util.utcnow()
+    with pytest.raises(HomeAssistantError) as err:
+        await entry.runtime_data.async_create_temporary_access(
+            ["ap-1"], start=now, end=now + timedelta(hours=1), description="Guest"
+        )
+    assert err.value.translation_key == "missing_created_link"
+    patch_client.async_create_temporary_access.assert_awaited_once()

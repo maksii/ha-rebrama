@@ -25,3 +25,9 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local quality reports and temporary audit files
+.local/
+.venv*/
+.sonar-reports/
+.scannerwork/

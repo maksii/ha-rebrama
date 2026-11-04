@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from homeassistant.util import dt as dt_util
 
@@ -19,6 +21,29 @@ from .const import BASE_URL, TEMP_ACCESS_PATH
 # Epoch values above this are milliseconds, not seconds (seconds won't reach
 # 1e11 until the year 5138).
 _EPOCH_MS_THRESHOLD = 1e11
+
+
+def temporary_access_slug(value: str) -> str:
+    """Validate a Rebrama share URL or opaque slug before using it in a path."""
+    if "://" in value:
+        try:
+            url = urlsplit(value)
+        except ValueError:
+            return ""
+        if url.scheme != "https" or url.netloc != "rebrama.com":
+            return ""
+        prefix = f"/{TEMP_ACCESS_PATH}/"
+        if not url.path.startswith(prefix):
+            return ""
+        value = url.path.removeprefix(prefix).rstrip("/")
+    return value if re.fullmatch(r"[A-Za-z0-9_-]+", value) else ""
+
+
+def _identifier(value: Any) -> str:
+    """Reject absent IDs instead of constructing persistent IDs from null."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)) or not str(value):
+        raise ValueError("Missing or invalid Rebrama identifier")
+    return str(value)
 
 
 def _to_datetime(value: Any) -> datetime | None:
@@ -43,12 +68,17 @@ def _to_datetime(value: Any) -> datetime | None:
             if parsed is None:
                 return None
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return _epoch_datetime(value)
+
+
+def _epoch_datetime(value: Any) -> datetime | None:
+    """Convert a positive numeric epoch, rejecting unrepresentable values."""
     if not isinstance(value, (int, float)) or value <= 0:
         return None
     seconds = value / 1000 if value > _EPOCH_MS_THRESHOLD else value
     try:
         return dt_util.utc_from_timestamp(seconds)
-    except (OverflowError, OSError, ValueError):
+    except OverflowError, OSError, ValueError:
         return None
 
 
@@ -82,7 +112,7 @@ class Profile:
         sensor.
         """
         return cls(
-            user_id=str(data["id"]),
+            user_id=_identifier(data["id"]),
             phone=str(data.get("phone") or ""),
             valid_until=_to_datetime(data.get("validUntil")),
         )
@@ -113,24 +143,24 @@ class Place:
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Place:
         """Build a place (and its nested access points) from the API payload."""
-        place_id = str(data["id"])
+        place_id = _identifier(data["id"])
         place_name = str(data.get("name") or "")
         access_points: dict[str, AccessPoint] = {}
         for raw in data.get("accessPoints") or []:
-            ap_id = str(raw["id"])
+            ap_id = _identifier(raw["id"])
             access_points[ap_id] = AccessPoint(
                 id=ap_id,
                 name=str(raw.get("name") or ""),
-                is_online=bool(raw.get("isOnline")),
-                can_share_access=bool(raw.get("canShareAccess")),
+                is_online=raw.get("isOnline") is True,
+                can_share_access=raw.get("canShareAccess") is True,
                 place_id=place_id,
                 place_name=place_name,
             )
         return cls(
             id=place_id,
             name=place_name,
-            can_manage=bool(data.get("canManage")),
-            is_owner=bool(data.get("isOwner")),
+            can_manage=data.get("canManage") is True,
+            is_owner=data.get("isOwner") is True,
             access_points=access_points,
         )
 
@@ -184,13 +214,10 @@ class TempAccess:
     def from_api(cls, data: dict[str, Any]) -> TempAccess:
         """Build from one ``temp-accesses`` item."""
         raw = str(data.get("url") or data.get("link") or "")
-        if raw and "://" not in raw:
-            # The API gave us a bare slug; rebuild the full share URL.
-            slug = raw.strip("/")
-            url = f"{BASE_URL}/{TEMP_ACCESS_PATH}/{slug}"
-        else:
-            slug = raw.rstrip("/").rsplit("/", 1)[-1] if raw else ""
-            url = raw
+        slug = temporary_access_slug(raw)
+        if not slug:
+            raise ValueError("Invalid temporary access link")
+        url = f"{BASE_URL}/{TEMP_ACCESS_PATH}/{slug}"
         uses = data.get("usesNumber")
         return cls(
             slug=slug,

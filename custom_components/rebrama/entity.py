@@ -122,10 +122,7 @@ class RebramaAccessPointEntity(CoordinatorEntity[RebramaCoordinator]):
     @property
     def access_point(self) -> AccessPoint | None:
         """Return the live access-point record, or ``None`` if it vanished."""
-        place = self.coordinator.data.places.get(self._place_id)
-        if place is None:
-            return None
-        return place.access_points.get(self._ap_id)
+        return self.coordinator.data.access_points.get(self._ap_id)
 
     @property
     def available(self) -> bool:

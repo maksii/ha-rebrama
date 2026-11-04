@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
@@ -15,7 +16,11 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er
-import voluptuous as vol
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    import voluptuous as vol
 
 from .const import (
     ATTR_ACCESS_POINTS,
@@ -30,6 +35,7 @@ from .const import (
     SERVICE_DELETE_TEMPORARY_ACCESS,
 )
 from .coordinator import RebramaConfigEntry
+from .models import temporary_access_slug
 
 CREATE_TEMPORARY_ACCESS_SCHEMA = vol.Schema(
     {
@@ -53,7 +59,12 @@ DELETE_TEMPORARY_ACCESS_SCHEMA = vol.Schema(
 
 def _slug(link: str) -> str:
     """Extract the trailing slug from a share link or return it unchanged."""
-    return link.rstrip("/").rsplit("/", 1)[-1] if "/" in link else link
+    slug = temporary_access_slug(link)
+    if not slug:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="invalid_temporary_access_link"
+        )
+    return slug
 
 
 def _loaded_entry(hass: HomeAssistant, entry_id: str) -> RebramaConfigEntry:
@@ -90,7 +101,10 @@ async def _async_create_temporary_access(call: ServiceCall) -> ServiceResponse:
                 translation_key="invalid_access_point",
                 translation_placeholders={"entity_id": entity_id},
             )
-        access_points[entry.config_entry_id].add(entry.unique_id.removesuffix("_open"))
+        account = _loaded_entry(hass, entry.config_entry_id).runtime_data.user_id
+        access_points[entry.config_entry_id].add(
+            entry.unique_id.removeprefix(f"{account}_").removesuffix("_open")
+        )
 
     if len(access_points) != 1:
         raise ServiceValidationError(

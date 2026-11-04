@@ -20,7 +20,7 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> str:
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    return er.async_get(hass).async_get_entity_id("button", DOMAIN, "ap-1_open")
+    return er.async_get(hass).async_get_entity_id("button", DOMAIN, "user-1_ap-1_open")
 
 
 async def test_press_opens_access_point(

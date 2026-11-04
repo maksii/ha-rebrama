@@ -65,6 +65,14 @@ class RebramaTemporaryAccessCalendar(RebramaAccountEntity, CalendarEntity):
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.user_id}_temporary_access"
 
+    @property
+    def available(self) -> bool:
+        """Do not show cached grants as current after a failed fetch."""
+        return (
+            super().available
+            and "temporary accesses" not in self.coordinator.data.failed_endpoints
+        )
+
     @staticmethod
     def _to_event(access: TempAccess) -> CalendarEvent | None:
         """Map a temporary access to a calendar event, or None if unusable."""
@@ -88,7 +96,7 @@ class RebramaTemporaryAccessCalendar(RebramaAccountEntity, CalendarEntity):
         """Return the active event, else the next upcoming one."""
         now = dt_util.utcnow()
         events = self._events()
-        ongoing = [event for event in events if event.start <= now <= event.end]
+        ongoing = [event for event in events if event.start <= now < event.end]
         if ongoing:
             return min(ongoing, key=lambda event: event.end)
         upcoming = sorted(

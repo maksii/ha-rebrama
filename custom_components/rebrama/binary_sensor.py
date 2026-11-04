@@ -44,7 +44,7 @@ class RebramaConnectivitySensor(RebramaAccessPointEntity, BinarySensorEntity):
     ) -> None:
         """Initialize the connectivity sensor."""
         super().__init__(coordinator, access_point)
-        self._attr_unique_id = f"{access_point.id}_connectivity"
+        self._attr_unique_id = f"{coordinator.user_id}_{access_point.id}_connectivity"
 
     @property
     def is_on(self) -> bool | None:

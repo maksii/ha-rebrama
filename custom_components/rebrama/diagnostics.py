@@ -74,6 +74,14 @@ async def async_get_config_entry_diagnostics(
             "options": dict(entry.options),
         },
         "settings": coordinator.settings,
+        "last_update_success": coordinator.last_update_success,
+        "last_successful_update": (
+            coordinator.last_successful_update.isoformat()
+            if coordinator.last_successful_update
+            else None
+        ),
+        "successful_updates": coordinator.successful_updates,
+        "failed_endpoints": sorted(coordinator.data.failed_endpoints),
         "update_interval_seconds": (
             coordinator.update_interval.total_seconds()
             if coordinator.update_interval
