@@ -93,7 +93,32 @@ provided in the environment. Never put a token in a command argument or file.
   sent. Cloud replies were HTTP 201 for create and HTTP 200 for revoke and reads.
 - Post-deployment log review found no Rebrama warning or error. Share-link paths
   are redacted, and no HTTP response bodies are logged.
-- Scheduled-poll and final GitHub check evidence are appended below.
+- Two unattended polls completed at 16:00:55 and 16:05:57 UTC (18:00:55 and
+  18:05:57 Europe/Kyiv). Each performed exactly the places, profile and temporary-
+  access reads, all HTTP 200. Poll completion spacing was approximately five
+  minutes. Nine access points stayed online; no Rebrama warning/error occurred.
+- All temporary API and HomeKit log levels were restored to warning, and the
+  homelab maintainer received completion notes with verification facts.
+
+## Hosted CI status and release hold
+
+The first PR run executed passing lint, typing, both versioned test jobs,
+hassfest, HACS validation, and CodeQL action steps. CodeQL analysis uploaded for
+both initial candidate revisions reported zero results. The former HACS brands
+skip was then removed: current upstream HACS accepts the shipped local
+`brand/icon.png`, as verified against its brands validator source.
+
+At the final inspection, GitHub still reported the newer hosted workflow runs
+as queued, while older jobs showed completed passing steps without terminal
+workflow status. GitHub's status page reported no incident. These pending
+statuses are not counted as passing release checks. PR #3 stays **draft** and no
+tag or release is published until the final revision's hosted checks complete.
+Local tests, strict typing, lint/format, Sonar main/feature-branch gates, protected
+backup, live migration, create/revoke, and two scheduled polls are verified.
+
+The release can be completed after the final PR checks are green, review/merge,
+and publication of a matching v1.3.0 tag. This report does not claim the hosted
+queue is resolved or that every possible future API behavior has been tested.
 
 ## Static analysis triage
 
